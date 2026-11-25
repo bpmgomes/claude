@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Criar conta · AgendaFácil</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <script type="module" src="/js/signup-page.js"></script>
+</head>
+<body>
+  <main class="card">
+    <h1>Crie sua conta</h1>
+    <p class="subtitle">Comece a configurar a agenda do seu negócio.</p>
+
+    <form id="signup-form" novalidate>
+      <div class="field">
+        <label for="name">Nome</label>
+        <input id="name" name="name" type="text" autocomplete="name" maxlength="100" required
+               aria-describedby="name-error">
+        <p class="field-error" id="name-error" data-field="name" aria-live="polite"></p>
+      </div>
+
+      <div class="field">
+        <label for="email">E-mail</label>
+        <input id="email" name="email" type="email" autocomplete="email" maxlength="254" required
+               aria-describedby="email-error">
+        <p class="field-error" id="email-error" data-field="email" aria-live="polite"></p>
+      </div>
+
+      <div class="field">
+        <label for="password">Senha</label>
+        <input id="password" name="password" type="password" autocomplete="new-password" minlength="8" required
+               aria-describedby="password-help password-error">
+        <p class="help" id="password-help">No mínimo 8 caracteres, com pelo menos uma letra e um número.</p>
+        <p class="field-error" id="password-error" data-field="password" aria-live="polite"></p>
+      </div>
+
+      <p class="form-error" id="form-error" role="alert" aria-live="polite"></p>
+
+      <button type="submit" id="submit-button">Criar conta</button>
+    </form>
+  </main>
+</body>
+</html>
