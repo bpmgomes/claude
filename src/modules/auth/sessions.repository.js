@@ -29,5 +29,18 @@ export function createSessionsRepository(db) {
         revokedAt: row.revoked_at,
       };
     },
+
+    /** Renova o prazo de uma sessão não revogada. */
+    async touch(id, { lastSeenAt, expiresAt }, conn = db) {
+      await conn.run(
+        'UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE id = ? AND revoked_at IS NULL',
+        [lastSeenAt, expiresAt, id],
+      );
+    },
+
+    /** Revoga a sessão (idempotente). */
+    async revoke(id, nowIso, conn = db) {
+      await conn.run('UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL', [nowIso, id]);
+    },
   };
 }

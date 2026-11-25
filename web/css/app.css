@@ -99,6 +99,23 @@ button:disabled {
   cursor: progress;
 }
 
+.secondary-link {
+  margin: 16px 0 0;
+  text-align: center;
+  color: #4b5563;
+}
+
+.secondary-link a {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.button-secondary {
+  color: #1f2937;
+  background: #fff;
+  border: 1px solid #9ca3af;
+}
+
 @media (min-width: 768px) {
   body {
     display: flex;

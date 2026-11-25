@@ -6,6 +6,7 @@ import {
   validateEmail,
   validatePassword,
   validateSignup,
+  validateLogin,
   MESSAGES,
 } from '../../src/shared/validation.js';
 
@@ -107,5 +108,40 @@ describe('validateSignup', () => {
     }
     assert.equal(normalizeEmail(42), '');
     assert.equal(validatePassword(12345678), REQ);
+  });
+});
+
+describe('validateLogin', () => {
+  test('normaliza o e-mail e mantém a senha como veio (critério 3)', () => {
+    assert.deepEqual(validateLogin({ email: ' ANA@X.com ', password: ' abcd1234 ' }), {
+      ok: true,
+      value: { email: 'ana@x.com', password: ' abcd1234 ' },
+    });
+  });
+
+  test('aceita "abc" como senha: sem regras de força no login', () => {
+    assert.equal(validateLogin({ email: 'ana@x.com', password: 'abc' }).ok, true);
+  });
+
+  test('e-mail ausente, só espaços ou inválido (critério 8)', () => {
+    assert.equal(validateLogin({ password: 'x' }).fields.email, 'Informe seu e-mail.');
+    assert.equal(validateLogin({ email: '   ', password: 'x' }).fields.email, 'Informe seu e-mail.');
+    assert.equal(validateLogin({ email: 'ana@', password: 'x' }).fields.email, 'Informe um e-mail válido.');
+  });
+
+  test('senha ausente, vazia ou não-string (critério 8)', () => {
+    for (const password of [undefined, '', null, 123, [], {}]) {
+      const r = validateLogin({ email: 'ana@x.com', password });
+      assert.equal(r.ok, false);
+      assert.deepEqual(r.fields, { password: 'Informe sua senha.' });
+    }
+  });
+
+  test('entradas estranhas nunca lançam e devolvem os dois campos', () => {
+    for (const v of [null, undefined, 42, 'x', []]) {
+      const r = validateLogin(v);
+      assert.equal(r.ok, false);
+      assert.deepEqual(Object.keys(r.fields).sort(), ['email', 'password']);
+    }
   });
 });

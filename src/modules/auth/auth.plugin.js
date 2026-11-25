@@ -3,6 +3,28 @@ import { toPublicUser } from '../accounts/users.repository.js';
 
 export const SESSION_COOKIE = 'af_session';
 
+const DAY_SECONDS = 24 * 60 * 60;
+
+function cookieOptions(config) {
+  return { httpOnly: true, sameSite: 'lax', path: '/', secure: config.cookieSecure };
+}
+
+/**
+ * Define o cookie de sessão. O Max-Age é o teto absoluto da sessão: quem
+ * decide a validade real (inatividade) é o servidor.
+ */
+export function setSessionCookie(reply, token, config) {
+  reply.setCookie(SESSION_COOKIE, token, {
+    ...cookieOptions(config),
+    maxAge: config.sessionAbsoluteTtlDays * DAY_SECONDS,
+  });
+}
+
+/** Remove o cookie de sessão no cliente. */
+export function clearSessionCookie(reply, config) {
+  reply.setCookie(SESSION_COOKIE, '', { ...cookieOptions(config), maxAge: 0 });
+}
+
 /**
  * Plugin de autenticação. Encapsulamento desligado (equivalente a fastify-plugin),
  * para que o decorator e o hook valham para todas as rotas do app.

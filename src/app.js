@@ -14,8 +14,13 @@ import { createUsersRepository } from './modules/accounts/users.repository.js';
 import { createSessionsRepository } from './modules/auth/sessions.repository.js';
 import { createSessionsService } from './modules/auth/sessions.service.js';
 import { createAccountsService } from './modules/accounts/accounts.service.js';
+import { createLoginAttemptsRepository } from './modules/auth/login-attempts.repository.js';
+import { createLoginAttemptsService } from './modules/auth/login-attempts.service.js';
+import { createAuthService } from './modules/auth/auth.service.js';
 import authPlugin from './modules/auth/auth.plugin.js';
+import csrfPlugin from './http/csrf.js';
 import accountsRoutes from './modules/accounts/accounts.routes.js';
+import authRoutes from './modules/auth/auth.routes.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -30,10 +35,12 @@ export const REDACT_PATHS = [
 
 /**
  * @param {object} [overrides] sobrescreve chaves de loadConfig(); aceita também `logStream`
+ *   e `now` (relógio `() => Date`, padrão `() => new Date()`, repassado a todos os serviços)
  * @returns {Promise<import('fastify').FastifyInstance>}
  */
 export async function buildApp(overrides = {}) {
   const config = mergeConfig(loadConfig(), overrides);
+  const now = overrides.now || (() => new Date());
 
   const logger = {
     level: config.logLevel,
@@ -41,7 +48,7 @@ export async function buildApp(overrides = {}) {
   };
   if (overrides.logStream) logger.stream = overrides.logStream;
 
-  const app = Fastify({ logger, bodyLimit: 16 * 1024, trustProxy: false });
+  const app = Fastify({ logger, bodyLimit: 16 * 1024, trustProxy: config.trustProxy });
   app.decorate('config', config);
   // A API só aceita JSON: o Fastify 5 traz parser de text/plain por padrão, e
   // removê-lo faz qualquer outro content-type responder 415 (mitigação de CSRF, R5).
@@ -53,10 +60,28 @@ export async function buildApp(overrides = {}) {
 
   const usersRepository = createUsersRepository(db);
   const sessionsRepository = createSessionsRepository(db);
-  const sessionsService = createSessionsService({ sessionsRepository, config });
-  const accountsService = createAccountsService({ db, usersRepository, sessionsService, config });
+  const loginAttemptsRepository = createLoginAttemptsRepository(db);
+  const sessionsService = createSessionsService({ sessionsRepository, config, now });
+  const accountsService = createAccountsService({ db, usersRepository, sessionsService, config, now });
+  const loginAttemptsService = createLoginAttemptsService({ db, loginAttemptsRepository, config, now });
+  const authService = createAuthService({
+    db,
+    usersRepository,
+    sessionsService,
+    loginAttemptsService,
+    config,
+    now,
+  });
   app.decorate('db', db);
-  app.decorate('services', { usersRepository, sessionsRepository, sessionsService, accountsService });
+  app.decorate('services', {
+    usersRepository,
+    sessionsRepository,
+    sessionsService,
+    accountsService,
+    loginAttemptsRepository,
+    loginAttemptsService,
+    authService,
+  });
 
   app.setErrorHandler(errorHandler);
   app.setNotFoundHandler((request, reply) => {
@@ -76,6 +101,7 @@ export async function buildApp(overrides = {}) {
     },
   });
   await app.register(cookie);
+  await app.register(csrfPlugin);
   if (config.rateLimit.enabled) {
     await app.register(rateLimit, { global: false });
   }
@@ -88,11 +114,13 @@ export async function buildApp(overrides = {}) {
     decorateReply: false,
   });
 
-  app.get('/', (request, reply) => reply.redirect('/cadastro', 302));
+  app.get('/', (request, reply) => reply.redirect('/login', 302));
+  app.get('/login', (request, reply) => reply.sendFile('login.html'));
   app.get('/cadastro', (request, reply) => reply.sendFile('cadastro.html'));
   app.get('/onboarding', (request, reply) => reply.sendFile('onboarding.html'));
 
   await app.register(accountsRoutes);
+  await app.register(authRoutes);
 
   await app.ready();
   return app;

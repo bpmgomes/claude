@@ -33,7 +33,7 @@ Critérios de aceite
 - Após cadastro, usuário é logado e redirecionado ao onboarding.
 
 ### AF-02 · Login e logout
-Tipo: História · Prioridade: Alta · Pontos: 3 · Status: TODO
+Tipo: História · Prioridade: Alta · Pontos: 3 · Status: DONE
 
 Como usuário cadastrado, quero entrar e sair do sistema com segurança.
 

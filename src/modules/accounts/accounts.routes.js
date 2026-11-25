@@ -1,6 +1,4 @@
-import { SESSION_COOKIE, requireAuth } from '../auth/auth.plugin.js';
-
-const DAY_SECONDS = 24 * 60 * 60;
+import { setSessionCookie, requireAuth } from '../auth/auth.plugin.js';
 
 export default async function accountsRoutes(app) {
   const { accountsService } = app.services;
@@ -11,14 +9,10 @@ export default async function accountsRoutes(app) {
     : {};
 
   app.post('/api/accounts', { config: signupRateLimit }, async (request, reply) => {
-    const { user, session } = await accountsService.signup(request.body);
-    reply.setCookie(SESSION_COOKIE, session.token, {
-      httpOnly: true,
-      sameSite: 'lax',
-      path: '/',
-      secure: config.cookieSecure,
-      maxAge: config.sessionTtlDays * DAY_SECONDS,
+    const { user, session } = await accountsService.signup(request.body, {
+      previousSessionId: request.sessionId,
     });
+    setSessionCookie(reply, session.token, config);
     return reply.status(201).send({ user, redirectTo: '/onboarding' });
   });
 

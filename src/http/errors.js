@@ -35,11 +35,37 @@ export class UnauthorizedError extends AppError {
   }
 }
 
+export class InvalidCredentialsError extends AppError {
+  constructor() {
+    super(401, 'INVALID_CREDENTIALS', 'E-mail ou senha inválidos.');
+    this.name = 'InvalidCredentialsError';
+  }
+}
+
+export class ForbiddenOriginError extends AppError {
+  constructor() {
+    super(403, 'FORBIDDEN_ORIGIN', 'Requisição não permitida.');
+    this.name = 'ForbiddenOriginError';
+  }
+}
+
+export class LoginLockedError extends AppError {
+  /** @param {number} retryAfterSeconds */
+  constructor(retryAfterSeconds) {
+    const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+    const label = minutes === 1 ? '1 minuto' : `${minutes} minutos`;
+    super(429, 'LOGIN_LOCKED', `Muitas tentativas de login. Tente novamente em ${label}.`);
+    this.name = 'LoginLockedError';
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 const GENERIC_500 = 'Erro inesperado. Tente novamente.';
 
-function body(code, message, fields) {
+function body(code, message, fields, retryAfterSeconds) {
   const error = { code, message };
   if (fields && Object.keys(fields).length > 0) error.fields = fields;
+  if (retryAfterSeconds !== undefined) error.retryAfterSeconds = retryAfterSeconds;
   return { error };
 }
 
@@ -48,7 +74,12 @@ function body(code, message, fields) {
  */
 export function errorHandler(error, request, reply) {
   if (error instanceof AppError) {
-    return reply.status(error.statusCode).send(body(error.code, error.message, error.fields));
+    if (error.retryAfterSeconds !== undefined) {
+      reply.header('Retry-After', String(error.retryAfterSeconds));
+    }
+    return reply
+      .status(error.statusCode)
+      .send(body(error.code, error.message, error.fields, error.retryAfterSeconds));
   }
 
   // Validação de schema do Fastify

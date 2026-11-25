@@ -13,6 +13,7 @@ export const MESSAGES = Object.freeze({
   emailInvalid: 'Informe um e-mail válido.',
   passwordRequirement: 'A senha deve ter no mínimo 8 caracteres, com pelo menos uma letra e um número.',
   passwordTooLong: 'A senha deve ter no máximo 72 caracteres.',
+  passwordRequired: 'Informe sua senha.',
 });
 
 // eslint-disable-next-line no-control-regex
@@ -73,4 +74,25 @@ export function validateSignup(input) {
     ok: true,
     value: { name: src.name.trim(), email: normalizeEmail(src.email), password: src.password },
   };
+}
+
+/**
+ * Validação do login. Não aplica as regras de força de senha do cadastro: elas
+ * podem mudar e não podem impedir quem já tem conta de entrar. Nenhuma mensagem
+ * depende de a conta existir.
+ * @param {unknown} input
+ * @returns {{ ok: true, value: { email: string, password: string } }
+ *         | { ok: false, fields: Record<string, string> }}
+ */
+export function validateLogin(input) {
+  const src = input && typeof input === 'object' ? input : {};
+  const fields = {};
+  const emailError = validateEmail(src.email);
+  if (emailError) fields.email = emailError;
+  if (typeof src.password !== 'string' || src.password.length === 0) {
+    fields.password = MESSAGES.passwordRequired;
+  }
+
+  if (Object.keys(fields).length > 0) return { ok: false, fields };
+  return { ok: true, value: { email: normalizeEmail(src.email), password: src.password } };
 }

@@ -47,7 +47,7 @@ describe('POST /api/accounts — sucesso', () => {
     assert.match(cookie, /HttpOnly/);
     assert.match(cookie, /SameSite=Lax/);
     assert.match(cookie, /Path=\//);
-    assert.match(cookie, /Max-Age=604800/);
+    assert.match(cookie, /Max-Age=2592000/);
     assert.doesNotMatch(cookie, /Secure/);
     assert.equal(await countUsers(), 1);
   });
@@ -284,20 +284,22 @@ describe('injeção (critério 14)', () => {
 });
 
 describe('páginas estáticas', () => {
-  test('GET / redireciona 302 para /cadastro', async () => {
+  test('GET / redireciona 302 para /login', async () => {
     const res = await app.inject({ method: 'GET', url: '/' });
     assert.equal(res.statusCode, 302);
-    assert.equal(res.headers.location, '/cadastro');
+    assert.equal(res.headers.location, '/login');
   });
 
-  test('/cadastro e /onboarding servem HTML', async () => {
-    for (const url of ['/cadastro', '/onboarding']) {
+  test('/login, /cadastro e /onboarding servem HTML', async () => {
+    for (const url of ['/login', '/cadastro', '/onboarding']) {
       const res = await app.inject({ method: 'GET', url });
       assert.equal(res.statusCode, 200, url);
       assert.match(res.headers['content-type'], /text\/html/);
     }
     const cad = await app.inject({ method: 'GET', url: '/cadastro' });
     assert.match(cad.body, /autocomplete="new-password"/);
+    const login = await app.inject({ method: 'GET', url: '/login' });
+    assert.match(login.body, /autocomplete="current-password"/);
   });
 
   test('/shared/validation.js e /js/*.js são servidos', async () => {
