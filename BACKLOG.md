@@ -79,7 +79,7 @@ Critérios de aceite
 - Slug sem acentos/espaços; sistema sugere alternativa se já existir.
 
 ### AF-06 · Cadastro de serviços
-Tipo: História · Prioridade: Alta · Pontos: 3 · Status: TODO
+Tipo: História · Prioridade: Alta · Pontos: 3 · Status: DONE
 
 Como dono, quero cadastrar serviços com nome, duração e preço.
 

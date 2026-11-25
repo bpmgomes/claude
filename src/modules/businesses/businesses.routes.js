@@ -1,5 +1,4 @@
-import { requireAuth } from '../auth/auth.plugin.js';
-import { createUserRateLimit } from '../../http/user-rate-limit.js';
+import { createRouteGuards, authOnly } from '../../http/route-guards.js';
 import { NotFoundError, InvalidImageError } from '../../http/errors.js';
 import { LOGO_MAX_BYTES } from '../../shared/validation.js';
 import { toOwnerBusiness } from './businesses.repository.js';
@@ -12,47 +11,31 @@ export const LOGO_CONTENT_TYPES = Object.freeze(['application/octet-stream', 'im
 
 const LOGO_TOO_LARGE = Object.freeze({ code: 'LOGO_TOO_LARGE', message: 'O logo deve ter no máximo 2 MB.' });
 
-/**
- * Hooks e config de rota para um bucket de limite (`businessWrite` ou `logoUpload`).
- * Ordem no onRequest: requireAuth (401), limite por usuário e, depois (adicionado pelo
- * @fastify/rate-limit), limite por IP. O corpo ainda não foi lido em nenhum deles.
- */
-function guardsFor(config, bucket) {
-  const rl = config.rateLimit;
-  if (!rl.enabled) return { onRequest: [requireAuth], config: {} };
-  const userLimit = createUserRateLimit({ max: rl[bucket].perUser, timeWindow: rl.timeWindow });
-  return {
-    onRequest: [requireAuth, userLimit],
-    config: { rateLimit: { max: rl[bucket].perIp, timeWindow: rl.timeWindow } },
-  };
-}
-
 export default async function businessesRoutes(app) {
   const { businessesService, businessesRepository, storage } = app.services;
   const { config } = app;
   const serialize = (business) => toOwnerBusiness(business, { publicBaseUrl: config.publicBaseUrl });
 
-  const write = guardsFor(config, 'businessWrite');
-  const logo = guardsFor(config, 'logoUpload');
-
-  app.get('/api/business', { onRequest: requireAuth }, async (request) => {
+  // Guards próprios por rota (createRouteGuards chamado inline em cada uma): contadores
+  // de IP e de usuário não são divididos entre rotas (AF-05 item 1, design AF-06 seção 2).
+  app.get('/api/business', authOnly(), async (request) => {
     const business = await businessesService.getForOwner(request.user.id);
     return { business: serialize(business) };
   });
 
-  app.post('/api/business', write, async (request, reply) => {
+  app.post('/api/business', createRouteGuards(config, 'businessWrite'), async (request, reply) => {
     const business = await businessesService.create(request.user.id, request.body);
     request.log.info({ event: 'business_created', userId: request.user.id, businessId: business.id });
     return reply.status(201).send({ business: serialize(business), redirectTo: NEXT_STEP_PATH });
   });
 
-  app.patch('/api/business', write, async (request) => {
+  app.patch('/api/business', createRouteGuards(config, 'businessWrite'), async (request) => {
     const business = await businessesService.update(request.user.id, request.body);
     request.log.info({ event: 'business_updated', userId: request.user.id, businessId: business.id });
     return { business: serialize(business) };
   });
 
-  app.get('/api/business/slug-availability', write, async (request) => {
+  app.get('/api/business/slug-availability', createRouteGuards(config, 'businessWrite'), async (request) => {
     const query = request.query || {};
     return businessesService.checkSlug(request.user.id, query.slug);
   });
@@ -66,12 +49,13 @@ export default async function businessesRoutes(app) {
       (request, body, done) => done(null, body),
     );
 
+    const putGuards = createRouteGuards(config, 'logoUpload');
     logoApp.put(
       '/api/business/logo',
       {
         bodyLimit: LOGO_MAX_BYTES,
-        onRequest: logo.onRequest,
-        config: { ...logo.config, payloadTooLarge: LOGO_TOO_LARGE },
+        ...putGuards,
+        config: { ...putGuards.config, payloadTooLarge: LOGO_TOO_LARGE },
       },
       async (request) => {
         const buffer = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
@@ -88,7 +72,7 @@ export default async function businessesRoutes(app) {
       },
     );
 
-    logoApp.delete('/api/business/logo', logo, async (request, reply) => {
+    logoApp.delete('/api/business/logo', createRouteGuards(config, 'logoUpload'), async (request, reply) => {
       await businessesService.removeLogo(request.user.id);
       return reply.status(204).send();
     });

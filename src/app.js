@@ -24,6 +24,9 @@ import authRoutes from './modules/auth/auth.routes.js';
 import { createBusinessesRepository } from './modules/businesses/businesses.repository.js';
 import { createBusinessesService } from './modules/businesses/businesses.service.js';
 import businessesRoutes from './modules/businesses/businesses.routes.js';
+import { createServicesRepository } from './modules/services/services.repository.js';
+import { createServicesService } from './modules/services/services.service.js';
+import servicesRoutes from './modules/services/services.routes.js';
 import { createStorage } from './storage/index.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -88,6 +91,15 @@ export async function buildApp(overrides = {}) {
     now,
     log: app.log,
   });
+  const servicesRepository = createServicesRepository(db);
+  // Sem `appointments`: usa a porta nula (noAppointments) até o AF-11.
+  const servicesService = createServicesService({
+    db,
+    servicesRepository,
+    businessesRepository,
+    now,
+    log: app.log,
+  });
   const authService = createAuthService({
     db,
     usersRepository,
@@ -109,6 +121,8 @@ export async function buildApp(overrides = {}) {
     storage,
     businessesRepository,
     businessesService,
+    servicesRepository,
+    servicesService,
   });
 
   app.setErrorHandler(errorHandler);
@@ -150,6 +164,7 @@ export async function buildApp(overrides = {}) {
   await app.register(accountsRoutes);
   await app.register(authRoutes);
   await app.register(businessesRoutes);
+  await app.register(servicesRoutes);
 
   await app.ready();
   return app;

@@ -13,17 +13,18 @@ export function readValues(form) {
   return values;
 }
 
-export function clearErrors(form, formError) {
-  for (const field of FIELDS) {
+/** `fieldNames`: campos do formulário (padrão: os do negócio). Cada um tem `<campo>-error`. */
+export function clearErrors(form, formError, fieldNames = FIELDS) {
+  for (const field of fieldNames) {
     document.getElementById(`${field}-error`).textContent = '';
     form.elements[field].removeAttribute('aria-invalid');
   }
   formError.textContent = '';
 }
 
-export function showErrors(form, formError, fields, message) {
+export function showErrors(form, formError, fields, message, fieldNames = FIELDS) {
   let first = null;
-  for (const field of FIELDS) {
+  for (const field of fieldNames) {
     const msg = fields[field];
     if (!msg) continue;
     document.getElementById(`${field}-error`).textContent = msg;

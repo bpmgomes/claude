@@ -25,3 +25,35 @@ export async function signupAndLogin(app, { email = 'ana@x.com', name = 'Ana' } 
   if (res.statusCode !== 201) throw new Error(`signup falhou: ${res.statusCode} ${res.body}`);
   return { af_session: tokenFrom(res) };
 }
+
+export const TEST_BUSINESS = Object.freeze({ name: 'Salão da Ana', address: 'Rua A, 10', phone: '(11) 91234-5678' });
+
+/**
+ * Cria o negócio do dono via `POST /api/business` e devolve o negócio da resposta.
+ * @returns {Promise<object>}
+ */
+export async function createBusinessFor(app, cookies, overrides = {}) {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/business',
+    cookies,
+    payload: { ...TEST_BUSINESS, ...overrides },
+  });
+  if (res.statusCode !== 201) throw new Error(`criação do negócio falhou: ${res.statusCode} ${res.body}`);
+  return res.json().business;
+}
+
+/**
+ * Cria um serviço via `POST /api/services` e devolve o serviço da resposta.
+ * @returns {Promise<object>}
+ */
+export async function createService(app, cookies, body = {}) {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/services',
+    cookies,
+    payload: { name: 'Corte', durationMinutes: 30, price: '50', ...body },
+  });
+  if (res.statusCode !== 201) throw new Error(`criação do serviço falhou: ${res.statusCode} ${res.body}`);
+  return res.json().service;
+}

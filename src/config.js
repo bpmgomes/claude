@@ -15,6 +15,10 @@
  * - `UPLOADS_DIR` (`./data/uploads`): raiz do armazenamento local dos logos.
  * - `PUBLIC_BASE_URL` (`http://localhost:<port>`): base do link público do negócio,
  *   normalizada sem barra final. Nunca é derivada do header `Host`.
+ * - `rateLimit.businessWrite`, `rateLimit.logoUpload` e `rateLimit.serviceWrite`
+ *   (`{ perUser, perIp }` por `timeWindow`): valores aplicados POR ROTA, cada rota com
+ *   contadores próprios (ver src/http/route-guards.js). `serviceWrite` (30/60 por minuto)
+ *   vale para criar, editar, desativar e reativar serviços.
  *
  * @param {Record<string, string|undefined>} env
  * @throws {Error} se `COOKIE_SECURE=false` com `NODE_ENV` fora de `COOKIE_INSECURE_ENVS`
@@ -50,6 +54,7 @@ export function loadConfig(env = process.env) {
       timeWindow: '1 minute',
       businessWrite: { perUser: 30, perIp: 60 },
       logoUpload: { perUser: 10, perIp: 20 },
+      serviceWrite: { perUser: 30, perIp: 60 },
     },
     logLevel: env.LOG_LEVEL || 'info',
   };

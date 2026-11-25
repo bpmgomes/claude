@@ -219,3 +219,117 @@ input[type="file"] {
   min-height: auto;
   padding: 8px;
 }
+
+/* AF-06: serviços */
+select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  font-size: 1rem;
+  color: inherit;
+  background: #fff;
+  border: 1px solid #9ca3af;
+  border-radius: 8px;
+}
+
+select:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+}
+
+select[aria-invalid="true"] {
+  border-color: #b91c1c;
+}
+
+input:disabled {
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
+
+.section-title {
+  margin: 0 0 16px;
+  font-size: 1.125rem;
+}
+
+.field-checkbox {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-checkbox input {
+  width: 20px;
+  min-width: 0;
+  min-height: 20px;
+  height: 20px;
+  margin: 0;
+}
+
+.field-checkbox label {
+  margin: 0;
+}
+
+.field-checkbox .field-error {
+  flex-basis: 100%;
+}
+
+.list-filter {
+  margin-top: 24px;
+}
+
+.service-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.service-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.service-info {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.service-name {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.service-meta {
+  margin: 2px 0 0;
+  font-size: 0.875rem;
+  color: #4b5563;
+}
+
+.service-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.service-actions .button-small {
+  margin-top: 0;
+}
+
+.badge-inactive {
+  display: inline-block;
+  padding: 0 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #92400e;
+  background: #fef3c7;
+  border-radius: 999px;
+  white-space: nowrap;
+}
