@@ -30,6 +30,9 @@ import servicesRoutes from './modules/services/services.routes.js';
 import { createProfessionalsRepository } from './modules/professionals/professionals.repository.js';
 import { createProfessionalsService } from './modules/professionals/professionals.service.js';
 import professionalsRoutes from './modules/professionals/professionals.routes.js';
+import { createWorkingHoursRepository } from './modules/working-hours/working-hours.repository.js';
+import { createWorkingHoursService } from './modules/working-hours/working-hours.service.js';
+import workingHoursRoutes from './modules/working-hours/working-hours.routes.js';
 import { createImageLimiter } from './images/image-limiter.js';
 import { createStorage } from './storage/index.js';
 
@@ -52,6 +55,7 @@ export const PAGES = Object.freeze({
   '/negocio': 'negocio.html',
   '/servicos': 'servicos.html',
   '/profissionais': 'profissionais.html',
+  '/horarios': 'horarios.html',
 });
 
 /**
@@ -120,6 +124,16 @@ export async function buildApp(overrides = {}) {
     now,
     log: app.log,
   });
+  const workingHoursRepository = createWorkingHoursRepository(db);
+  // Sem `appointments`: usa a porta nula (noAppointments) até o AF-11.
+  const workingHoursService = createWorkingHoursService({
+    db,
+    workingHoursRepository,
+    professionalsRepository,
+    businessesRepository,
+    now,
+    log: app.log,
+  });
   const authService = createAuthService({
     db,
     usersRepository,
@@ -145,6 +159,8 @@ export async function buildApp(overrides = {}) {
     servicesService,
     professionalsRepository,
     professionalsService,
+    workingHoursRepository,
+    workingHoursService,
     imageLimiter,
   });
 
@@ -189,6 +205,7 @@ export async function buildApp(overrides = {}) {
   await app.register(businessesRoutes);
   await app.register(servicesRoutes);
   await app.register(professionalsRoutes);
+  await app.register(workingHoursRoutes);
 
   await app.ready();
   return app;

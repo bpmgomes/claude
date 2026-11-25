@@ -173,7 +173,11 @@ function renderItem(professional) {
   remove.className = 'button-secondary button-small';
   remove.textContent = 'Remover';
   remove.addEventListener('click', () => removeItem(professional, remove));
-  actions.append(edit, remove);
+  const hours = document.createElement('a');
+  hours.className = 'button-secondary button-small button-link';
+  hours.href = `/horarios?id=${encodeURIComponent(professional.id)}`;
+  hours.textContent = 'Horários';
+  actions.append(edit, hours, remove);
 
   item.append(avatar, info, actions);
   return item;

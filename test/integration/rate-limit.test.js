@@ -51,10 +51,12 @@ test('com rate limit ativo e loginMax 2, a 3ª requisição de login do mesmo IP
 // AF-05 (critério 22): limite por usuário autenticado além do limite por IP.
 // ---------------------------------------------------------------------------
 
-const { signupAndLogin, createBusinessFor, createService, createProfessional } = await import('../helpers/session.js');
+const { signupAndLogin, createBusinessFor, createService, createProfessional, putHours, WEEK_9_TO_18 } = await import(
+  '../helpers/session.js'
+);
 const { pngOf } = await import('../helpers/images.js');
 
-function businessLimits({ businessWrite, logoUpload, serviceWrite, professionalWrite, professionalPhoto } = {}) {
+function businessLimits({ businessWrite, logoUpload, serviceWrite, professionalWrite, professionalPhoto, hoursWrite } = {}) {
   return {
     enabled: true,
     signupMax: 100,
@@ -63,6 +65,7 @@ function businessLimits({ businessWrite, logoUpload, serviceWrite, professionalW
     serviceWrite: serviceWrite || { perUser: 100, perIp: 100 },
     professionalWrite: professionalWrite || { perUser: 100, perIp: 100 },
     professionalPhoto: professionalPhoto || { perUser: 100, perIp: 100 },
+    hoursWrite: hoursWrite || { perUser: 100, perIp: 100 },
   };
 }
 
@@ -435,6 +438,90 @@ test('sem sessão, POST /api/professionals responde 401 e não consome o limite 
     const ana = await signupAndLogin(app);
     await createBusinessFor(app, ana);
     assert.equal((await postProfessional(app, ana, 'Ana')).statusCode, 201);
+  } finally {
+    await app.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AF-08 (critério 18): bucket próprio `hoursWrite`; a leitura da grade não tem limite.
+// ---------------------------------------------------------------------------
+
+const getHours = (app, cookies, id) => app.inject({ method: 'GET', url: `/api/professionals/${id}/hours`, cookies });
+
+test('hoursWrite.perUser 2: o 3º PUT /hours dá 429 e o PATCH do profissional continua passando', async () => {
+  const { app } = await buildTestApp({ rateLimit: businessLimits({ hoursWrite: { perUser: 2, perIp: 100 } }) });
+  try {
+    const ana = await signupAndLogin(app);
+    await createBusinessFor(app, ana);
+    const professional = await createProfessional(app, ana);
+    const statuses = [];
+    for (let i = 0; i < 3; i++) statuses.push((await putHours(app, ana, professional.id, WEEK_9_TO_18)).statusCode);
+    assert.deepEqual(statuses, [200, 200, 429]);
+    const last = await putHours(app, ana, professional.id, WEEK_9_TO_18);
+    assert.equal(last.json().error.code, 'RATE_LIMITED');
+    // Rotas com contadores próprios.
+    const patch = await app.inject({
+      method: 'PATCH',
+      url: `/api/professionals/${professional.id}`,
+      cookies: ana,
+      payload: { name: 'Ana Lima' },
+    });
+    assert.equal(patch.statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test('5 GET /hours não consomem o limite do PUT (critério 18)', async () => {
+  const { app } = await buildTestApp({ rateLimit: businessLimits({ hoursWrite: { perUser: 1, perIp: 1 } }) });
+  try {
+    const ana = await signupAndLogin(app);
+    await createBusinessFor(app, ana);
+    const professional = await createProfessional(app, ana);
+    for (let i = 0; i < 5; i++) assert.equal((await getHours(app, ana, professional.id)).statusCode, 200);
+    assert.equal((await putHours(app, ana, professional.id, WEEK_9_TO_18)).statusCode, 200);
+    assert.equal((await putHours(app, ana, professional.id, WEEK_9_TO_18)).statusCode, 429);
+    assert.equal((await getHours(app, ana, professional.id)).statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test('hoursWrite.perIp 2: o 3º PUT do mesmo IP por usuários diferentes dá 429', async () => {
+  const { app } = await buildTestApp({ rateLimit: businessLimits({ hoursWrite: { perUser: 100, perIp: 2 } }) });
+  try {
+    const users = [];
+    for (const [i, email] of ['a@x.com', 'b@x.com', 'c@x.com'].entries()) {
+      const cookies = await signupAndLogin(app, { email });
+      await createBusinessFor(app, cookies, { name: `Salão ${i + 1}` });
+      users.push({ cookies, professional: await createProfessional(app, cookies) });
+    }
+    const statuses = [];
+    for (const { cookies, professional } of users) {
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/professionals/${professional.id}/hours`,
+        cookies,
+        payload: { days: WEEK_9_TO_18 },
+        remoteAddress: '10.0.0.1',
+      });
+      statuses.push(res.statusCode);
+    }
+    assert.deepEqual(statuses, [200, 200, 429]);
+  } finally {
+    await app.close();
+  }
+});
+
+test('sem sessão, PUT /hours responde 401 e não consome o limite do usuário', async () => {
+  const { app } = await buildTestApp({ rateLimit: businessLimits({ hoursWrite: { perUser: 1, perIp: 100 } }) });
+  try {
+    const ana = await signupAndLogin(app);
+    await createBusinessFor(app, ana);
+    const professional = await createProfessional(app, ana);
+    for (let i = 0; i < 3; i++) assert.equal((await putHours(app, {}, professional.id, WEEK_9_TO_18)).statusCode, 401);
+    assert.equal((await putHours(app, ana, professional.id, WEEK_9_TO_18)).statusCode, 200);
   } finally {
     await app.close();
   }

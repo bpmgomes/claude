@@ -72,6 +72,14 @@ export function toOwnerProfessional(professional) {
  * @param {import('../../db/index.js').Database} db
  */
 export function createProfessionalsRepository(db) {
+  /** UPDATE sem efeito na linha do profissional ativo (ver `lockActive` abaixo). */
+  function lockActive(id, businessId, conn) {
+    return conn.run(
+      'UPDATE professionals SET updated_at = updated_at WHERE id = ? AND business_id = ? AND removed_at IS NULL',
+      [id, businessId],
+    );
+  }
+
   /**
    * Serviços de vários profissionais numa consulta só (sem N+1).
    * @param {{ activeOnly?: boolean }} [options] activeOnly: só serviços ativos (contratos públicos)
@@ -319,16 +327,25 @@ export function createProfessionalsRepository(db) {
     },
 
     /**
+     * Trava da linha do profissional ativo: UPDATE sem efeito que, no PostgreSQL, trava a linha até o
+     * fim da transação e serializa contra `markRemoved` e outras escritas da mesma pessoa (AF-08,
+     * gravação da grade). Evita o padrão SELECT + UPDATE sem `FOR UPDATE` (AF-07 item 2).
+     * `changes === 0`: removido ou de outro negócio.
+     * @returns {Promise<{ changes: number }>}
+     */
+    async lockActive(id, businessId, conn = db) {
+      return lockActive(id, businessId, conn);
+    },
+
+    /**
      * Trava para o AF-11 (critério 19): dentro da transação de criação do agendamento, antes do
-     * INSERT. UPDATE sem efeito que disputa a mesma linha com `markRemoved`. `changes === 0`
-     * (removido ou de outro negócio) -> o agendamento deve abortar.
+     * INSERT. Delega para `lockActive` (mesmo SQL; o nome do contrato do AF-11 fica). Disputa a
+     * mesma linha com `markRemoved`. `changes === 0` (removido ou de outro negócio) -> o
+     * agendamento deve abortar.
      * @returns {Promise<{ changes: number }>}
      */
     async claimForBooking(id, businessId, conn = db) {
-      return conn.run(
-        'UPDATE professionals SET updated_at = updated_at WHERE id = ? AND business_id = ? AND removed_at IS NULL',
-        [id, businessId],
-      );
+      return lockActive(id, businessId, conn);
     },
   };
 }

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Horários · AgendaFácil</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <script type="module" src="/js/horarios-page.js"></script>
+</head>
+<body>
+  <main class="card">
+    <img id="logo-preview" class="logo-thumb" alt="Logo do negócio" width="96" height="96" hidden>
+    <h1 id="business-name">Carregando…</h1>
+    <p class="subtitle">Horários</p>
+
+    <p class="help" id="page-status" role="status" aria-live="polite"></p>
+    <p class="help" id="not-found" hidden>
+      Profissional não encontrado. <a href="/profissionais">Voltar para Profissionais</a>
+    </p>
+
+    <section id="hours-section" hidden>
+      <div class="field">
+        <label for="professional-select">Profissional</label>
+        <select id="professional-select" class="professional-select"></select>
+      </div>
+
+      <p class="field-warning" id="empty-state" aria-live="polite"></p>
+      <p class="help" id="no-services" hidden>
+        Este profissional ainda não tem serviço ativo. <a href="/profissionais">Ir para Profissionais</a>
+      </p>
+
+      <div class="field">
+        <label for="copy-from">Copiar de outro profissional</label>
+        <select id="copy-from" class="professional-select"></select>
+        <p class="help">Copiar só preenche o formulário. Nada é gravado até você salvar.</p>
+      </div>
+
+      <form id="hours-form" novalidate>
+        <div id="days"></div>
+
+        <p class="help">Para turnos após a meia-noite, cadastre a continuação no dia seguinte.</p>
+        <p class="form-error" id="form-error" role="alert" aria-live="polite"></p>
+        <p class="field-warning" id="save-warning" aria-live="polite"></p>
+        <p class="help" id="save-status" aria-live="polite"></p>
+
+        <button type="submit" id="save-button">Salvar horários</button>
+      </form>
+    </section>
+
+    <p class="secondary-link"><a href="/profissionais">Profissionais</a> · <a href="/servicos">Serviços</a></p>
+    <button type="button" id="logout-button" class="button-secondary button-spaced">Sair</button>
+  </main>
+</body>
+</html>

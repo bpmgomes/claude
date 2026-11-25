@@ -21,6 +21,8 @@
  *   vale para criar, editar, desativar e reativar serviços.
  * - `rateLimit.professionalWrite` (30/60 por minuto: criar, editar e remover profissional) e
  *   `rateLimit.professionalPhoto` (10/20 por minuto: trocar e remover a foto), também POR ROTA.
+ * - `rateLimit.hoursWrite` (30/60 por minuto: gravar a grade de horários do profissional, POR ROTA).
+ *   A leitura da grade não tem limite por usuário.
  * - `imageProcessing` (`{ concurrency: 2, queueMax: 4, queueTimeoutMs: 10000 }`): limite de
  *   processamentos de imagem simultâneos, dividido entre logo e foto (src/images/image-limiter.js);
  *   acima da fila, 503 IMAGE_BUSY.
@@ -62,6 +64,7 @@ export function loadConfig(env = process.env) {
       serviceWrite: { perUser: 30, perIp: 60 },
       professionalWrite: { perUser: 30, perIp: 60 },
       professionalPhoto: { perUser: 10, perIp: 20 },
+      hoursWrite: { perUser: 30, perIp: 60 },
     },
     imageProcessing: {
       concurrency: 2,

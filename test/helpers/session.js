@@ -72,3 +72,33 @@ export async function createProfessional(app, cookies, body = {}) {
   if (res.statusCode !== 201) throw new Error(`criação do profissional falhou: ${res.statusCode} ${res.body}`);
   return res.json().professional;
 }
+
+/** Segunda a sexta 09:00–12:00 e 13:00–18:00; sábado e domingo de folga (AF-08). */
+export const WEEK_9_TO_18 = Object.freeze(
+  [1, 2, 3, 4, 5, 6, 7].map((weekday) =>
+    Object.freeze({
+      weekday,
+      intervals:
+        weekday <= 5
+          ? Object.freeze([
+              Object.freeze({ start: '09:00', end: '12:00' }),
+              Object.freeze({ start: '13:00', end: '18:00' }),
+            ])
+          : Object.freeze([]),
+    }),
+  ),
+);
+
+/**
+ * `PUT /api/professionals/:id/hours` com `{ days }`. Devolve a resposta crua (sem checar status).
+ * @returns {Promise<import('light-my-request').Response>}
+ */
+export function putHours(app, cookies, professionalId, days, { headers = {} } = {}) {
+  return app.inject({
+    method: 'PUT',
+    url: `/api/professionals/${professionalId}/hours`,
+    cookies,
+    headers,
+    payload: { days },
+  });
+}

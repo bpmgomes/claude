@@ -100,7 +100,7 @@ Critérios de aceite
 - Não é possível remover um profissional com agendamentos futuros sem antes realocá-los ou cancelá-los.
 
 ### AF-08 · Horário de funcionamento
-Tipo: História · Prioridade: Alta · Pontos: 2 · Status: TODO
+Tipo: História · Prioridade: Alta · Pontos: 2 · Status: DONE
 
 Como dono, quero definir os horários de cada profissional por dia da semana, incluindo intervalo de almoço.
 

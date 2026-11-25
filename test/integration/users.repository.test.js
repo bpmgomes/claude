@@ -53,7 +53,7 @@ test('toPublicUser não expõe passwordHash', () => {
 test('migrações são idempotentes', async () => {
   assert.deepEqual(await runMigrations(db), []);
   const rows = await db.all('SELECT version FROM schema_migrations');
-  assert.deepEqual(rows.map((r) => r.version), ['001_users_sessions', '002_login_attempts', '003_businesses', '004_services', '005_professionals']);
+  assert.deepEqual(rows.map((r) => r.version), ['001_users_sessions', '002_login_attempts', '003_businesses', '004_services', '005_professionals', '006_working_hours']);
 });
 
 test('transaction faz rollback em erro', async () => {
