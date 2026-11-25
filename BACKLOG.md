@@ -21,7 +21,7 @@ Escala de pontos: Fibonacci (1, 2, 3, 5, 8, 13). Prioridade: Alta / Média / Bai
 ## E1 — Autenticação e contas
 
 ### AF-01 · Cadastro de dono do negócio
-Tipo: História · Prioridade: Alta · Pontos: 3 · Status: TODO
+Tipo: História · Prioridade: Alta · Pontos: 3 · Status: DONE
 
 Como dono de negócio, quero criar uma conta com nome, e-mail e senha, para começar a configurar minha agenda.
 
