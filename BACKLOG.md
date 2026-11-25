@@ -90,7 +90,7 @@ Critérios de aceite
 - Serviço pode ser desativado sem apagar o histórico.
 
 ### AF-07 · Cadastro de profissionais
-Tipo: História · Prioridade: Alta · Pontos: 5 · Status: TODO
+Tipo: História · Prioridade: Alta · Pontos: 5 · Status: DONE
 
 Como dono, quero cadastrar profissionais e quais serviços cada um realiza.
 

@@ -1,5 +1,5 @@
 import { createRouteGuards, authOnly } from '../../http/route-guards.js';
-import { NotFoundError, InvalidImageError } from '../../http/errors.js';
+import { NotFoundError, InvalidImageError, ImageBusyError } from '../../http/errors.js';
 import { LOGO_MAX_BYTES } from '../../shared/validation.js';
 import { toOwnerBusiness } from './businesses.repository.js';
 import { NEXT_STEP_PATH } from './businesses.service.js';
@@ -8,6 +8,12 @@ import { NEXT_STEP_PATH } from './businesses.service.js';
 export const LOGO_FILE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.png$/;
 
 export const LOGO_CONTENT_TYPES = Object.freeze(['application/octet-stream', 'image/png', 'image/jpeg']);
+
+/**
+ * Cache de `/media/*` (logo e foto): 1 dia, sem `immutable` (design AF-07, decisão 8;
+ * fecha AF-05 item 4). Cada upload gera uma URL nova.
+ */
+export const MEDIA_CACHE_CONTROL = 'public, max-age=86400';
 
 const LOGO_TOO_LARGE = Object.freeze({ code: 'LOGO_TOO_LARGE', message: 'O logo deve ter no máximo 2 MB.' });
 
@@ -66,6 +72,8 @@ export default async function businessesRoutes(app) {
         } catch (err) {
           if (err instanceof InvalidImageError) {
             request.log.info({ event: 'logo_rejected', reason: err.reason || 'invalid' });
+          } else if (err instanceof ImageBusyError) {
+            request.log.warn({ event: 'image_busy', userId: request.user.id });
           }
           throw err;
         }
@@ -90,7 +98,7 @@ export default async function businessesRoutes(app) {
     return reply
       .header('Content-Type', 'image/png')
       .header('Content-Disposition', 'inline; filename="logo.png"')
-      .header('Cache-Control', 'public, max-age=31536000, immutable')
+      .header('Cache-Control', MEDIA_CACHE_CONTROL)
       .header('Content-Security-Policy', "default-src 'none'; sandbox")
       .send(body);
   });

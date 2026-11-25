@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Profissionais · AgendaFácil</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <script type="module" src="/js/profissionais-page.js"></script>
+</head>
+<body>
+  <main class="card">
+    <img id="logo-preview" class="logo-thumb" alt="Logo do negócio" width="96" height="96" hidden>
+    <h1 id="business-name">Carregando…</h1>
+    <p class="subtitle">Profissionais</p>
+
+    <section id="professionals-section" hidden>
+      <form id="professional-form" novalidate>
+        <h2 id="form-title" class="section-title">Novo profissional</h2>
+
+        <div class="field">
+          <label for="name">Nome do profissional</label>
+          <input id="name" name="name" type="text" autocomplete="off" maxlength="100" required
+                 aria-describedby="name-warning name-error">
+          <p class="field-warning" id="name-warning" aria-live="polite"></p>
+          <p class="field-error" id="name-error" aria-live="polite"></p>
+        </div>
+
+        <fieldset class="field checkbox-fieldset" id="serviceIds" aria-describedby="serviceIds-error">
+          <legend>Serviços que realiza</legend>
+          <div id="service-choices" class="checkbox-list"></div>
+          <p class="help" id="no-services" hidden>
+            Cadastre seus serviços antes de associá-los. <a href="/servicos">Ir para Serviços</a>
+          </p>
+          <p class="field-error" id="serviceIds-error" aria-live="polite"></p>
+        </fieldset>
+
+        <div class="field">
+          <label for="photo">Foto (opcional)</label>
+          <img id="photo-preview" class="avatar avatar-large" src="/img/avatar-default.svg" alt="Foto do profissional"
+               width="96" height="96">
+          <input id="photo" name="photo" type="file" accept="image/png,image/jpeg" aria-describedby="photo-help photo-error">
+          <p class="help" id="photo-help">PNG ou JPG, até 2 MB.</p>
+          <p class="field-error" id="photo-error" aria-live="polite"></p>
+          <button type="button" id="change-photo" class="button-secondary button-small" hidden>Trocar foto</button>
+          <button type="button" id="remove-photo" class="button-secondary button-small" hidden>Remover foto</button>
+        </div>
+
+        <p class="form-error" id="form-error" role="alert" aria-live="polite"></p>
+        <p class="help" id="save-status" aria-live="polite"></p>
+
+        <button type="submit" id="submit-button">Adicionar profissional</button>
+        <button type="button" id="cancel-edit" class="button-secondary button-spaced" hidden>Cancelar edição</button>
+      </form>
+
+      <p class="help" id="list-status" role="status" aria-live="polite"></p>
+      <ul id="professional-list" class="professional-list"></ul>
+    </section>
+
+    <p class="secondary-link"><a href="/servicos">Serviços</a> · <a href="/negocio">Editar dados do negócio</a></p>
+    <button type="button" id="logout-button" class="button-secondary button-spaced">Sair</button>
+  </main>
+</body>
+</html>

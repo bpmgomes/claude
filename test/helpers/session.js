@@ -57,3 +57,18 @@ export async function createService(app, cookies, body = {}) {
   if (res.statusCode !== 201) throw new Error(`criação do serviço falhou: ${res.statusCode} ${res.body}`);
   return res.json().service;
 }
+
+/**
+ * Cria um profissional via `POST /api/professionals` e devolve o profissional da resposta.
+ * @returns {Promise<object>}
+ */
+export async function createProfessional(app, cookies, body = {}) {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/professionals',
+    cookies,
+    payload: { name: 'Ana Souza', ...body },
+  });
+  if (res.statusCode !== 201) throw new Error(`criação do profissional falhou: ${res.statusCode} ${res.body}`);
+  return res.json().professional;
+}

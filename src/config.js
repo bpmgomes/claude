@@ -19,6 +19,11 @@
  *   (`{ perUser, perIp }` por `timeWindow`): valores aplicados POR ROTA, cada rota com
  *   contadores próprios (ver src/http/route-guards.js). `serviceWrite` (30/60 por minuto)
  *   vale para criar, editar, desativar e reativar serviços.
+ * - `rateLimit.professionalWrite` (30/60 por minuto: criar, editar e remover profissional) e
+ *   `rateLimit.professionalPhoto` (10/20 por minuto: trocar e remover a foto), também POR ROTA.
+ * - `imageProcessing` (`{ concurrency: 2, queueMax: 4, queueTimeoutMs: 10000 }`): limite de
+ *   processamentos de imagem simultâneos, dividido entre logo e foto (src/images/image-limiter.js);
+ *   acima da fila, 503 IMAGE_BUSY.
  *
  * @param {Record<string, string|undefined>} env
  * @throws {Error} se `COOKIE_SECURE=false` com `NODE_ENV` fora de `COOKIE_INSECURE_ENVS`
@@ -55,6 +60,13 @@ export function loadConfig(env = process.env) {
       businessWrite: { perUser: 30, perIp: 60 },
       logoUpload: { perUser: 10, perIp: 20 },
       serviceWrite: { perUser: 30, perIp: 60 },
+      professionalWrite: { perUser: 30, perIp: 60 },
+      professionalPhoto: { perUser: 10, perIp: 20 },
+    },
+    imageProcessing: {
+      concurrency: 2,
+      queueMax: 4,
+      queueTimeoutMs: 10_000,
     },
     logLevel: env.LOG_LEVEL || 'info',
   };
@@ -89,19 +101,21 @@ export function parseTrustProxy(value) {
 }
 
 /**
- * Combina a config base com overrides (merge raso, exceto `rateLimit` e `loginLock`).
- * `logStream`, `now` e `storage` não fazem parte da config e são descartados.
+ * Combina a config base com overrides (merge raso, exceto `rateLimit`, `loginLock` e
+ * `imageProcessing`). `logStream`, `now`, `storage` e `imageLimiter` não fazem parte da
+ * config e são descartados.
  * Dentro de `rateLimit` o merge também é raso: quem sobrescreve `rateLimit.logoUpload`
  * passa o objeto inteiro.
  */
 export function mergeConfig(base, overrides = {}) {
   // eslint-disable-next-line no-unused-vars
-  const { logStream, now, storage, ...rest } = overrides;
+  const { logStream, now, storage, imageLimiter, ...rest } = overrides;
   const merged = {
     ...base,
     ...rest,
     rateLimit: { ...base.rateLimit, ...(rest.rateLimit || {}) },
     loginLock: { ...base.loginLock, ...(rest.loginLock || {}) },
+    imageProcessing: { ...base.imageProcessing, ...(rest.imageProcessing || {}) },
   };
   return deepFreeze(merged);
 }

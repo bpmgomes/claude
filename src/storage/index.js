@@ -9,8 +9,8 @@ import { LocalDiskStorage } from './local-disk.js';
  * @property {(key: string) => Promise<void>} delete                  // idempotente
  */
 
-/** Únicas chaves aceitas: geradas pelo servidor (`logos/<uuid>.png`). */
-export const STORAGE_KEY_RE = /^logos\/[0-9a-f-]{36}\.png$/;
+/** Únicas chaves aceitas: geradas pelo servidor (`logos/<uuid>.png`, `professionals/<uuid>.png`). */
+export const STORAGE_KEY_RE = /^(logos|professionals)\/[0-9a-f-]{36}\.png$/;
 
 /**
  * Defesa em profundidade: o serviço só gera chaves válidas, mas o adapter recusa qualquer outra.

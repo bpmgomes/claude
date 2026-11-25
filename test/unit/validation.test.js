@@ -200,7 +200,9 @@ describe('nome do negócio e endereço (critérios 3, 5)', () => {
 
   test('nome: 100 code points aceitos, 101 recusados (acentos e emoji contam 1)', () => {
     assert.equal(validateBusinessName('á'.repeat(100)), null);
-    assert.equal(validateBusinessName('💈'.repeat(100)), null);
+    // Emoji conta 1 code point; a regra de nome visível (AF-07) exige ao menos uma letra ou número.
+    assert.equal(validateBusinessName(`A${'💈'.repeat(99)}`), null);
+    assert.equal(validateBusinessName('💈'.repeat(100)), 'O nome contém caracteres inválidos.');
     assert.equal(validateBusinessName('a'.repeat(101)), 'O nome deve ter no máximo 100 caracteres.');
     assert.equal(validateBusinessName('💈'.repeat(101)), 'O nome deve ter no máximo 100 caracteres.');
     // 100 letras com acento combinante viram 100 code points após NFC
@@ -309,5 +311,74 @@ describe('validateBusinessInput', () => {
 
   test('LOGO_MAX_BYTES é 2 MiB', () => {
     assert.equal(LOGO_MAX_BYTES, 2_097_152);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AF-07 (critério 3, AF-06 item 1): regra única de nome visível.
+// ---------------------------------------------------------------------------
+
+const { hasVisibleContent, textKey, MAX_MARKS_PER_LETTER } = await import('../../src/shared/validation.js');
+const { validateServiceName, serviceNameKey, SERVICE_MESSAGES } = await import('../../src/shared/services.js');
+
+const REJECTED_VISIBLE = [
+  ['só marcas', '́́'],
+  ['4 marcas seguidas', 'ẫ̄́'],
+  ['U+3164 sozinho', 'ㅤ'],
+  ['U+3164 no fim', 'Anaㅤ'],
+  ['U+115F', 'Anaᅟ'],
+  ['U+1160', 'Anaᅠ'],
+  ['U+FFA0', 'Anaﾠ'],
+  ['U+2800', '⠀'],
+  ['reticências', '...'],
+  ['hífen', '-'],
+];
+const ACCEPTED_VISIBLE = [
+  ['Ana', 'Ana'],
+  ['João NFC', 'João'.normalize('NFC')],
+  ['João NFD', 'João'.normalize('NFD')],
+  ['Nguyễn (2 marcas)', 'Nguyễn'],
+  ['Dra. Ana', 'Dra. Ana'],
+  ['Ana 2', 'Ana 2'],
+  ['李', '李'],
+];
+
+describe('hasVisibleContent e textKey (AF-07, critério 3)', () => {
+  for (const [label, text] of REJECTED_VISIBLE) {
+    test(`recusa: ${label}`, () => {
+      assert.equal(hasVisibleContent(text), false);
+      assert.equal(validateBusinessName(text), 'O nome contém caracteres inválidos.');
+    });
+  }
+  for (const [label, text] of ACCEPTED_VISIBLE) {
+    test(`aceita: ${label}`, () => {
+      assert.equal(hasVisibleContent(text), true);
+      assert.equal(validateBusinessName(text), null);
+    });
+  }
+
+  test('3 marcas por letra é o máximo', () => {
+    assert.equal(MAX_MARKS_PER_LETTER, 3);
+    assert.equal(hasVisibleContent('ẫ̄'), true);
+    assert.equal(hasVisibleContent('ẫ̄́'), false);
+  });
+
+  test('não-string é falso', () => {
+    for (const v of [undefined, null, 1, {}]) assert.equal(hasVisibleContent(v), false);
+  });
+
+  test('textKey: NFC/NFD, caixa, acentos e espaços; serviceNameKey é alias', () => {
+    assert.equal(textKey('  CÓRTE   Masculino '), 'corte masculino');
+    assert.equal(textKey('João'.normalize('NFD')), textKey('João'.normalize('NFC')));
+    assert.equal(textKey(null), '');
+    assert.equal(serviceNameKey, textKey);
+  });
+
+  test('regra única: negócio, endereço e serviço recusam U+3164 e marca solta', () => {
+    for (const text of ['ㅤ', '́']) {
+      assert.equal(validateBusinessName(text), 'O nome contém caracteres inválidos.');
+      assert.equal(validateAddress(text), 'O endereço contém caracteres inválidos.');
+      assert.equal(validateServiceName(text), SERVICE_MESSAGES.nameInvalid);
+    }
   });
 });

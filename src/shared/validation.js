@@ -66,11 +66,56 @@ export function normalizeText(raw) {
   return raw.trim().normalize('NFC');
 }
 
-function validateText(raw, max, messages) {
+// Letras e brancos invisíveis que não são \p{Cf}: U+115F, U+1160, U+3164 (Hangul filler),
+// U+FFA0 (halfwidth Hangul filler), U+2800 (Braille em branco).
+const INVISIBLE_CHARS = /[\u115F\u1160\u3164\uFFA0\u2800]/u;
+const VISIBLE_CHAR = /[\p{L}\p{N}]/u;
+const LEADING_MARK = /^\p{M}/u;
+/** No máximo 3 marcas combinantes seguidas por letra (AF-06 item 1). */
+export const MAX_MARKS_PER_LETTER = 3;
+const TOO_MANY_MARKS = new RegExp(`\\p{M}{${MAX_MARKS_PER_LETTER + 1},}`, 'u');
+
+/**
+ * Chave normalizada: NFC -> NFD -> remove \p{M} -> minúsculas -> colapsa \s+.
+ * "Corte Masculino", "corte  masculino", "CÓRTE MASCULINO" -> "corte masculino".
+ * @returns {string}
+ */
+export function textKey(text) {
+  return normalizeText(text)
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * Conteúdo visível (AF-06 item 1): ao menos um \p{L}/\p{N}, nenhum caractere de
+ * INVISIBLE_CHARS, não começa com \p{M} e não tem mais de 3 \p{M} seguidos (na forma NFD).
+ * @returns {boolean}
+ */
+export function hasVisibleContent(text) {
+  if (typeof text !== 'string') return false;
+  if (INVISIBLE_CHARS.test(text)) return false;
+  const decomposed = text.normalize('NFD');
+  if (LEADING_MARK.test(decomposed)) return false;
+  if (TOO_MANY_MARKS.test(decomposed)) return false;
+  return VISIBLE_CHAR.test(decomposed);
+}
+
+/**
+ * Regra única de texto (nome do negócio, endereço, serviço, profissional): trim + NFC,
+ * 1..max code points, sem \p{Cc}/\p{Cf} e com conteúdo visível.
+ * @param {unknown} raw
+ * @param {number} max
+ * @param {{ required: string, tooLong: string, invalid: string }} messages
+ * @returns {string|null}
+ */
+export function validateText(raw, max, messages) {
   const text = normalizeText(raw);
   if (text.length === 0) return messages.required;
   if ([...text].length > max) return messages.tooLong;
   if (hasForbiddenChars(text)) return messages.invalid;
+  if (!hasVisibleContent(text) || textKey(text) === '') return messages.invalid;
   return null;
 }
 

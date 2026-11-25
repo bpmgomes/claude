@@ -8,7 +8,19 @@ import { LocalDiskStorage } from '../../src/storage/local-disk.js';
 import { createMemoryStorage } from '../../src/storage/memory.js';
 import { assertValidKey, createStorage } from '../../src/storage/index.js';
 
-const BAD_KEYS = ['../x.png', 'logos/../../etc/passwd', 'logos/a.png', '/abs.png', 'logos\\x.png', '', null];
+const BAD_KEYS = [
+  '../x.png',
+  'logos/../../etc/passwd',
+  'logos/a.png',
+  '/abs.png',
+  'logos\\x.png',
+  '',
+  null,
+  // AF-07
+  `professionals/../logos/${'0'.repeat(36)}.png`,
+  `professional/${'0'.repeat(36)}.png`,
+  `professionals/${'0'.repeat(36)}.jpg`,
+];
 
 async function listAll(dir) {
   const out = [];
@@ -92,5 +104,22 @@ describe('createMemoryStorage', () => {
       assert.throws(() => assertValidKey(key), /inválida/);
     }
     assert.deepEqual(storage.keys(), []);
+  });
+});
+
+describe('chaves de foto de profissional (AF-07, critério 13)', () => {
+  test('professionals/<uuid>.png é aceito', async () => {
+    const storage = createMemoryStorage();
+    const key = `professionals/${randomUUID()}.png`;
+    assert.doesNotThrow(() => assertValidKey(key));
+    await storage.put(key, Buffer.from('x'));
+    assert.deepEqual(storage.keys(), [key]);
+  });
+
+  test('travessia, prefixo errado e extensão errada são recusados', () => {
+    const id = randomUUID();
+    for (const key of [`professionals/../logos/${id}.png`, `professional/${id}.png`, `professionals/${id}.jpg`]) {
+      assert.throws(() => assertValidKey(key), /inválida/, key);
+    }
   });
 });

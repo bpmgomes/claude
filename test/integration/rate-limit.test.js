@@ -51,16 +51,18 @@ test('com rate limit ativo e loginMax 2, a 3ª requisição de login do mesmo IP
 // AF-05 (critério 22): limite por usuário autenticado além do limite por IP.
 // ---------------------------------------------------------------------------
 
-const { signupAndLogin, createBusinessFor, createService } = await import('../helpers/session.js');
+const { signupAndLogin, createBusinessFor, createService, createProfessional } = await import('../helpers/session.js');
 const { pngOf } = await import('../helpers/images.js');
 
-function businessLimits({ businessWrite, logoUpload, serviceWrite } = {}) {
+function businessLimits({ businessWrite, logoUpload, serviceWrite, professionalWrite, professionalPhoto } = {}) {
   return {
     enabled: true,
     signupMax: 100,
     businessWrite: businessWrite || { perUser: 100, perIp: 100 },
     logoUpload: logoUpload || { perUser: 100, perIp: 100 },
     serviceWrite: serviceWrite || { perUser: 100, perIp: 100 },
+    professionalWrite: professionalWrite || { perUser: 100, perIp: 100 },
+    professionalPhoto: professionalPhoto || { perUser: 100, perIp: 100 },
   };
 }
 
@@ -307,6 +309,132 @@ test('sem sessão, POST /api/services responde 401 e não consome o limite do us
     await createBusinessFor(app, ana);
     const service = await createService(app, ana);
     assert.equal(service.name, 'Corte');
+  } finally {
+    await app.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AF-07 (critério 26): guards próprios por rota para profissionais.
+// ---------------------------------------------------------------------------
+
+function postProfessional(app, cookies, name, remoteAddress = '127.0.0.1') {
+  return app.inject({ method: 'POST', url: '/api/professionals', cookies, payload: { name }, remoteAddress });
+}
+
+function putProfessionalPhoto(app, cookies, id, payload) {
+  return app.inject({
+    method: 'PUT',
+    url: `/api/professionals/${id}/photo`,
+    cookies,
+    headers: { 'content-type': 'application/octet-stream' },
+    payload,
+  });
+}
+
+test('professionalWrite.perUser 2: o 3º POST dá 429 e, logo depois, PATCH e DELETE do mesmo usuário passam', async () => {
+  const { app } = await buildTestApp({ rateLimit: businessLimits({ professionalWrite: { perUser: 2, perIp: 100 } }) });
+  try {
+    const ana = await signupAndLogin(app);
+    await createBusinessFor(app, ana);
+    const responses = [];
+    for (const name of ['P1', 'P2', 'P3']) responses.push(await postProfessional(app, ana, name));
+    assert.deepEqual(
+      responses.map((r) => r.statusCode),
+      [201, 201, 429],
+    );
+    assert.equal(responses[2].json().error.code, 'RATE_LIMITED');
+    assert.equal((await app.db.get('SELECT COUNT(*) AS n FROM professionals')).n, 2);
+    const id = responses[0].json().professional.id;
+    const patch = await app.inject({ method: 'PATCH', url: `/api/professionals/${id}`, cookies: ana, payload: { name: 'X' } });
+    assert.equal(patch.statusCode, 200);
+    const del = await app.inject({ method: 'DELETE', url: `/api/professionals/${id}`, cookies: ana });
+    assert.equal(del.statusCode, 204);
+  } finally {
+    await app.close();
+  }
+});
+
+test('5 GET /api/professionals não consomem o limite do POST (critério 26)', async () => {
+  const { app } = await buildTestApp({ rateLimit: businessLimits({ professionalWrite: { perUser: 1, perIp: 1 } }) });
+  try {
+    const ana = await signupAndLogin(app);
+    await createBusinessFor(app, ana);
+    for (let i = 0; i < 5; i++) {
+      assert.equal((await app.inject({ method: 'GET', url: '/api/professionals', cookies: ana })).statusCode, 200);
+    }
+    assert.equal((await postProfessional(app, ana, 'Ana')).statusCode, 201);
+    assert.equal((await postProfessional(app, ana, 'Bia')).statusCode, 429);
+  } finally {
+    await app.close();
+  }
+});
+
+test('professionalPhoto.perUser 1: o upload não consome o limite de edição; 2º PUT dá 429 (critério 26)', async () => {
+  const { app } = await buildTestApp({
+    rateLimit: businessLimits({
+      professionalWrite: { perUser: 2, perIp: 100 },
+      professionalPhoto: { perUser: 1, perIp: 100 },
+    }),
+  });
+  try {
+    const ana = await signupAndLogin(app);
+    await createBusinessFor(app, ana);
+    const professional = await createProfessional(app, ana);
+    assert.equal((await putProfessionalPhoto(app, ana, professional.id, await pngOf(10, 10))).statusCode, 200);
+    const patch = await app.inject({
+      method: 'PATCH',
+      url: `/api/professionals/${professional.id}`,
+      cookies: ana,
+      payload: { name: 'Ana Lima' },
+    });
+    assert.equal(patch.statusCode, 200);
+    // Corpo acima de 2 MiB: se fosse lido daria 413; o limite responde antes.
+    const second = await putProfessionalPhoto(app, ana, professional.id, Buffer.alloc(3 * 1024 * 1024));
+    assert.equal(second.statusCode, 429);
+    // DELETE da foto tem contador próprio.
+    const delPhoto = await app.inject({ method: 'DELETE', url: `/api/professionals/${professional.id}/photo`, cookies: ana });
+    assert.equal(delPhoto.statusCode, 204);
+  } finally {
+    await app.close();
+  }
+});
+
+test('professionalWrite.perIp 2: o 3º POST do mesmo IP por usuários diferentes dá 429 e o PATCH passa', async () => {
+  const { app } = await buildTestApp({ rateLimit: businessLimits({ professionalWrite: { perUser: 100, perIp: 2 } }) });
+  try {
+    const users = [];
+    for (const [i, email] of ['a@x.com', 'b@x.com', 'c@x.com'].entries()) {
+      const cookies = await signupAndLogin(app, { email });
+      await createBusinessFor(app, cookies, { name: `Salão ${i + 1}` });
+      users.push(cookies);
+    }
+    const responses = [];
+    for (const cookies of users) responses.push(await postProfessional(app, cookies, 'Ana', '10.0.0.1'));
+    assert.deepEqual(
+      responses.map((r) => r.statusCode),
+      [201, 201, 429],
+    );
+    const patch = await app.inject({
+      method: 'PATCH',
+      url: `/api/professionals/${responses[0].json().professional.id}`,
+      cookies: users[0],
+      payload: { name: 'Ana Lima' },
+      remoteAddress: '10.0.0.1',
+    });
+    assert.equal(patch.statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test('sem sessão, POST /api/professionals responde 401 e não consome o limite do usuário', async () => {
+  const { app } = await buildTestApp({ rateLimit: businessLimits({ professionalWrite: { perUser: 1, perIp: 100 } }) });
+  try {
+    for (let i = 0; i < 3; i++) assert.equal((await postProfessional(app, {}, 'Ana')).statusCode, 401);
+    const ana = await signupAndLogin(app);
+    await createBusinessFor(app, ana);
+    assert.equal((await postProfessional(app, ana, 'Ana')).statusCode, 201);
   } finally {
     await app.close();
   }

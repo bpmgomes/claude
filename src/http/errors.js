@@ -55,6 +55,30 @@ export class InvalidImageError extends AppError {
   }
 }
 
+export const IMAGE_BUSY_MESSAGE = 'Muitas imagens sendo processadas agora. Tente novamente em instantes.';
+
+/** Limitador de processamento de imagem cheio (design AF-07, 4.2). 503: carga do servidor, não uso da pessoa. */
+export class ImageBusyError extends AppError {
+  /** @param {number} retryAfterSeconds só vai no header Retry-After */
+  constructor(retryAfterSeconds = 5) {
+    super(503, 'IMAGE_BUSY', IMAGE_BUSY_MESSAGE);
+    this.name = 'ImageBusyError';
+    this.retryAfterHeader = retryAfterSeconds;
+  }
+}
+
+export const PROFESSIONAL_HAS_APPOINTMENTS_MESSAGE =
+  'Este profissional tem agendamentos futuros. Realoque ou cancele esses agendamentos antes de remover.';
+
+export class ProfessionalHasAppointmentsError extends ConflictError {
+  /** @param {number} count agendamentos futuros (vai no corpo como `futureAppointmentsCount`) */
+  constructor(count) {
+    super('PROFESSIONAL_HAS_FUTURE_APPOINTMENTS', PROFESSIONAL_HAS_APPOINTMENTS_MESSAGE);
+    this.name = 'ProfessionalHasAppointmentsError';
+    this.futureAppointmentsCount = count;
+  }
+}
+
 export class RateLimitedError extends AppError {
   /** @param {number} retryAfterSeconds só vai no header Retry-After (o corpo segue o formato do RATE_LIMITED) */
   constructor(retryAfterSeconds) {
@@ -98,11 +122,14 @@ export class LoginLockedError extends AppError {
 
 const GENERIC_500 = 'Erro inesperado. Tente novamente.';
 
-function body(code, message, fields, retryAfterSeconds, suggestion) {
+function body(code, message, fields, retryAfterSeconds, suggestion, futureAppointmentsCount) {
   const error = { code, message };
   if (fields && Object.keys(fields).length > 0) error.fields = fields;
   if (retryAfterSeconds !== undefined) error.retryAfterSeconds = retryAfterSeconds;
   if (typeof suggestion === 'string') error.suggestion = suggestion;
+  if (Number.isInteger(futureAppointmentsCount) && futureAppointmentsCount >= 0) {
+    error.futureAppointmentsCount = futureAppointmentsCount;
+  }
   return { error };
 }
 
@@ -118,7 +145,16 @@ export function errorHandler(error, request, reply) {
     }
     return reply
       .status(error.statusCode)
-      .send(body(error.code, error.message, error.fields, error.retryAfterSeconds, error.suggestion));
+      .send(
+        body(
+          error.code,
+          error.message,
+          error.fields,
+          error.retryAfterSeconds,
+          error.suggestion,
+          error.futureAppointmentsCount,
+        ),
+      );
   }
 
   // Validação de schema do Fastify

@@ -27,6 +27,10 @@ import businessesRoutes from './modules/businesses/businesses.routes.js';
 import { createServicesRepository } from './modules/services/services.repository.js';
 import { createServicesService } from './modules/services/services.service.js';
 import servicesRoutes from './modules/services/services.routes.js';
+import { createProfessionalsRepository } from './modules/professionals/professionals.repository.js';
+import { createProfessionalsService } from './modules/professionals/professionals.service.js';
+import professionalsRoutes from './modules/professionals/professionals.routes.js';
+import { createImageLimiter } from './images/image-limiter.js';
 import { createStorage } from './storage/index.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -47,12 +51,15 @@ export const PAGES = Object.freeze({
   '/onboarding': 'onboarding.html',
   '/negocio': 'negocio.html',
   '/servicos': 'servicos.html',
+  '/profissionais': 'profissionais.html',
 });
 
 /**
  * @param {object} [overrides] sobrescreve chaves de loadConfig(); aceita também `logStream`,
  *   `now` (relógio `() => Date`, padrão `() => new Date()`, repassado a todos os serviços)
- *   e `storage` (instância de `Storage`; padrão: disco local em `config.uploadsDir`)
+ *   `storage` (instância de `Storage`; padrão: disco local em `config.uploadsDir`) e
+ *   `imageLimiter` (instância pronta de `createImageLimiter`; padrão: criada com
+ *   `config.imageProcessing`, dividida entre logo e foto)
  * @returns {Promise<import('fastify').FastifyInstance>}
  */
 export async function buildApp(overrides = {}) {
@@ -82,11 +89,13 @@ export async function buildApp(overrides = {}) {
   const accountsService = createAccountsService({ db, usersRepository, sessionsService, config, now });
   const loginAttemptsService = createLoginAttemptsService({ db, loginAttemptsRepository, config, now });
   const storage = overrides.storage || createStorage(config);
+  const imageLimiter = overrides.imageLimiter || createImageLimiter(config.imageProcessing);
   const businessesRepository = createBusinessesRepository(db);
   const businessesService = createBusinessesService({
     db,
     businessesRepository,
     storage,
+    imageLimiter,
     config,
     now,
     log: app.log,
@@ -97,6 +106,17 @@ export async function buildApp(overrides = {}) {
     db,
     servicesRepository,
     businessesRepository,
+    now,
+    log: app.log,
+  });
+  const professionalsRepository = createProfessionalsRepository(db);
+  // Sem `appointments`: usa a porta nula (noAppointments) até o AF-11.
+  const professionalsService = createProfessionalsService({
+    db,
+    professionalsRepository,
+    businessesRepository,
+    storage,
+    imageLimiter,
     now,
     log: app.log,
   });
@@ -123,6 +143,9 @@ export async function buildApp(overrides = {}) {
     businessesService,
     servicesRepository,
     servicesService,
+    professionalsRepository,
+    professionalsService,
+    imageLimiter,
   });
 
   app.setErrorHandler(errorHandler);
@@ -165,6 +188,7 @@ export async function buildApp(overrides = {}) {
   await app.register(authRoutes);
   await app.register(businessesRoutes);
   await app.register(servicesRoutes);
+  await app.register(professionalsRoutes);
 
   await app.ready();
   return app;

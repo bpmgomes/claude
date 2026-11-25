@@ -201,7 +201,8 @@ describe('servir o logo (critério 23)', () => {
     assert.match(res.headers['content-security-policy'], /sandbox/);
     assert.match(res.headers['content-security-policy'], /default-src 'none'/);
     assert.equal(res.headers['content-disposition'], 'inline; filename="logo.png"');
-    assert.equal(res.headers['cache-control'], 'public, max-age=31536000, immutable');
+    // AF-07 (decisão 8, fecha AF-05 item 4): 1 dia, sem immutable.
+    assert.equal(res.headers['cache-control'], 'public, max-age=86400');
     assert.deepEqual(res.rawPayload, await storage.get(keyOf(logoUrl)));
   });
 

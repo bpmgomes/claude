@@ -9,7 +9,7 @@ import {
 import { MESSAGES } from '../../shared/validation.js';
 import { UniqueViolationError } from '../../db/errors.js';
 import { ValidationError, ConflictError, NotFoundError } from '../../http/errors.js';
-import { noAppointments } from './appointments-port.js';
+import { noAppointments } from '../appointments/appointments-port.js';
 
 export const SERVICES_PER_BUSINESS_MAX = 100;
 
@@ -22,7 +22,7 @@ const noopLog = { info() {}, warn() {}, error() {} };
  *   db: import('../../db/index.js').Database,
  *   servicesRepository: ReturnType<typeof import('./services.repository.js').createServicesRepository>,
  *   businessesRepository: ReturnType<typeof import('../businesses/businesses.repository.js').createBusinessesRepository>,
- *   appointments?: import('./appointments-port.js').AppointmentsPort,
+ *   appointments?: import('../appointments/appointments-port.js').AppointmentsPort,
  *   now?: () => Date,
  *   log?: { info: Function, warn: Function, error: Function },
  * }} deps

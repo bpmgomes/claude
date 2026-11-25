@@ -165,7 +165,9 @@ describe('nome (critérios 3 e 20)', () => {
 
   test('100 code points (inclusive emoji) é aceito', () => {
     assert.equal(validateServiceName('a'.repeat(100)), null);
-    assert.equal(validateServiceName('😀'.repeat(100)), null);
+    // Emoji conta 1 code point; a regra de nome visível (AF-07) exige ao menos uma letra ou número.
+    assert.equal(validateServiceName(`A${'😀'.repeat(99)}`), null);
+    assert.equal(validateServiceName('😀'.repeat(100)), M.nameInvalid);
     assert.equal(validateServiceName('😀'.repeat(101)), M.nameTooLong);
   });
 

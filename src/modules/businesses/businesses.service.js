@@ -10,6 +10,7 @@ import {
   SLUG_TAKEN_MESSAGE,
 } from '../../http/errors.js';
 import { processLogo as defaultProcessLogo } from './logo-image.js';
+import { unlimitedImageLimiter } from '../../images/image-limiter.js';
 
 export const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
 export const NEXT_STEP_PATH = '/servicos';
@@ -27,6 +28,7 @@ const noopLog = { info() {}, warn() {}, error() {} };
  *   businessesRepository: ReturnType<typeof import('./businesses.repository.js').createBusinessesRepository>,
  *   storage: import('../../storage/index.js').Storage,
  *   processLogo?: (buffer: Buffer) => Promise<Buffer>,
+ *   imageLimiter?: { run<T>(task: () => Promise<T>): Promise<T> },
  *   config: object,
  *   now?: () => Date,
  *   log?: { info: Function, warn: Function },
@@ -37,6 +39,7 @@ export function createBusinessesService({
   businessesRepository,
   storage,
   processLogo = defaultProcessLogo,
+  imageLimiter = unlimitedImageLimiter,
   // eslint-disable-next-line no-unused-vars
   config,
   now = () => new Date(),
@@ -166,14 +169,15 @@ export function createBusinessesService({
     },
 
     /**
-     * Valida, reprocessa e grava o logo. A chave é sempre gerada aqui.
+     * Valida, reprocessa (dentro do limitador de imagem compartilhado) e grava o logo.
+     * A chave é sempre gerada aqui; `storage.put` e a transação ficam fora da vaga.
      * @param {string} ownerId
      * @param {Buffer} buffer
-     * @throws {NotFoundError|import('../../http/errors.js').InvalidImageError}
+     * @throws {NotFoundError|import('../../http/errors.js').InvalidImageError|import('../../http/errors.js').ImageBusyError}
      */
     async setLogo(ownerId, buffer) {
       const business = await getForOwner(ownerId);
-      const png = await processLogo(buffer);
+      const png = await imageLimiter.run(() => processLogo(buffer));
       const key = `logos/${randomUUID()}.png`;
       await storage.put(key, png);
 

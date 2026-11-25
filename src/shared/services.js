@@ -1,7 +1,7 @@
 // Regras de serviço compartilhadas entre backend e browser (/shared/services.js).
 // Módulo puro: só importa ./validation.js (também puro). Preço sempre em centavos
 // inteiros, convertido por aritmética de string, sem ponto flutuante.
-import { normalizeText, hasForbiddenChars, MESSAGES } from './validation.js';
+import { normalizeText, validateText, textKey, MESSAGES } from './validation.js';
 
 export const SERVICE_NAME_MAX = 100;
 export const DURATION_MIN = 15;
@@ -47,29 +47,24 @@ const SERVICE_FIELDS = ['name', 'durationMinutes', 'price', 'priceOnRequest'];
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 
 /**
- * Mesma regra do nome do negócio: trim + NFC, 1..100 code points, sem \p{Cc}/\p{Cf}.
+ * Mesma regra do nome do negócio (validateText): trim + NFC, 1..100 code points,
+ * sem \p{Cc}/\p{Cf} e com conteúdo visível (AF-06 item 1).
  * @returns {string|null} mensagem de erro ou null
  */
 export function validateServiceName(raw) {
-  const name = normalizeText(raw);
-  if (name.length === 0) return SERVICE_MESSAGES.nameRequired;
-  if ([...name].length > SERVICE_NAME_MAX) return SERVICE_MESSAGES.nameTooLong;
-  if (hasForbiddenChars(name)) return SERVICE_MESSAGES.nameInvalid;
-  return null;
+  return validateText(raw, SERVICE_NAME_MAX, {
+    required: SERVICE_MESSAGES.nameRequired,
+    tooLong: SERVICE_MESSAGES.nameTooLong,
+    invalid: SERVICE_MESSAGES.nameInvalid,
+  });
 }
 
 /**
- * Chave de unicidade do nome: sem acentos, minúsculas, espaços colapsados.
+ * Chave de unicidade do nome: sem acentos, minúsculas, espaços colapsados (alias de textKey).
  * "Corte Masculino", "corte  masculino", "CÓRTE MASCULINO" -> "corte masculino".
- * @returns {string}
+ * @type {(name: unknown) => string}
  */
-export function serviceNameKey(name) {
-  return normalizeText(name)
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
-}
+export const serviceNameKey = textKey;
 
 /**
  * Só número JSON inteiro, de 15 a 480, múltiplo de 15. Texto (inclusive "30") é rejeitado.

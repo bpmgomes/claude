@@ -36,11 +36,16 @@ Toda a configuração vem de variáveis de ambiente, lidas por `loadConfig` em `
 | `COOKIE_SECURE` | `true` | Envia o cookie de sessão com `Secure`. `false` só é aceito com `NODE_ENV=development` ou `NODE_ENV=test` (valor exato); com qualquer outro valor, inclusive sem `NODE_ENV`, `COOKIE_SECURE=false` impede a aplicação de iniciar. |
 | `TRUST_PROXY` | `false` | Define de onde vem o IP do cliente (usado no bloqueio de login e no rate limit). Ver abaixo. |
 | `ALLOWED_ORIGINS` | vazio | Origens extras aceitas pela proteção CSRF, separadas por vírgula (ex.: `https://admin.exemplo.com`). Por padrão só a própria origem é aceita. |
-| `RATE_LIMIT_ENABLED` | `true` | Liga o rate limit por IP (cadastro: 10/min; login: 20/min) e, nas rotas do negócio e dos serviços, também por usuário. Os limites valem **por rota**, cada rota com contadores próprios por IP e por usuário: escrita do negócio e checagem de slug (`rateLimit.businessWrite`): 30/min por usuário e 60/min por IP; logo (`rateLimit.logoUpload`): 10/min por usuário e 20/min por IP; criar, editar, desativar e reativar serviço (`rateLimit.serviceWrite`): 30/min por usuário e 60/min por IP. |
-| `UPLOADS_DIR` | `./data/uploads` | Diretório dos logos enviados (`logos/<uuid>.png`). Deve ficar num volume persistente e entrar no backup junto com o banco. |
+| `RATE_LIMIT_ENABLED` | `true` | Liga o rate limit por IP (cadastro: 10/min; login: 20/min) e, nas rotas do negócio e dos serviços, também por usuário. Os limites valem **por rota**, cada rota com contadores próprios por IP e por usuário: escrita do negócio e checagem de slug (`rateLimit.businessWrite`): 30/min por usuário e 60/min por IP; logo (`rateLimit.logoUpload`): 10/min por usuário e 20/min por IP; criar, editar, desativar e reativar serviço (`rateLimit.serviceWrite`): 30/min por usuário e 60/min por IP; criar, editar e remover profissional (`rateLimit.professionalWrite`): 30/min por usuário e 60/min por IP; trocar e remover a foto do profissional (`rateLimit.professionalPhoto`): 10/min por usuário e 20/min por IP. Leituras (`GET`) não têm limite por usuário. |
+| `UPLOADS_DIR` | `./data/uploads` | Diretório dos logos (`logos/<uuid>.png`) e das fotos de profissionais (`professionals/<uuid>.png`). Deve ficar num volume persistente e entrar no backup junto com o banco. |
 | `PUBLIC_BASE_URL` | `http://localhost:<PORT>` | Base do link público do negócio (ex.: `https://agendafacil.app`), sem barra final. **Defina em produção**; o link nunca é montado a partir do header `Host`. |
 | `LOG_LEVEL` | `info` | Nível de log. |
 | `NODE_ENV` | – | Só `development` e `test` aceitam `COOKIE_SECURE=false`. |
+
+### Processamento de imagem e mídia
+
+- `imageProcessing` (em `src/config.js`, sem variável de ambiente): `{ concurrency: 2, queueMax: 4, queueTimeoutMs: 10000 }`. Logo e foto de profissional dividem o mesmo limitador por processo: até 2 imagens processadas ao mesmo tempo, até 4 na fila (no máximo 10 s de espera) e, acima disso, `503 IMAGE_BUSY` com `Retry-After: 5`. Com menos de 512 MiB de memória, reduza `concurrency` para 1.
+- `/media/logos/*` e `/media/professionals/*` saem com `Cache-Control: public, max-age=86400` (1 dia, sem `immutable`). Cada upload gera uma URL nova e a URL antiga dá 404 na hora, mas um cache de navegador ou CDN pode manter a imagem antiga por até 1 dia.
 
 ### `TRUST_PROXY`
 

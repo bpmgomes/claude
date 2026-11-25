@@ -50,6 +50,13 @@ describe('loadConfig', () => {
     assert.deepEqual(c.rateLimit.logoUpload, { perUser: 10, perIp: 20 });
   });
 
+  test('padrões do AF-07: buckets de profissionais e imageProcessing', () => {
+    const c = loadConfig({});
+    assert.deepEqual(c.rateLimit.professionalWrite, { perUser: 30, perIp: 60 });
+    assert.deepEqual(c.rateLimit.professionalPhoto, { perUser: 10, perIp: 20 });
+    assert.deepEqual(c.imageProcessing, { concurrency: 2, queueMax: 4, queueTimeoutMs: 10000 });
+  });
+
   test('padrões do AF-02 (critério 22)', () => {
     const c = loadConfig({});
     assert.equal(c.trustProxy, false);
@@ -100,5 +107,19 @@ describe('mergeConfig', () => {
     assert.equal(merged.rateLimit.signupMax, 10);
     assert.equal('now' in merged, false);
     assert.equal('logStream' in merged, false);
+  });
+
+  test('merge raso de imageProcessing e descarte de imageLimiter (AF-07)', () => {
+    const merged = mergeConfig(loadConfig({}), {
+      imageProcessing: { concurrency: 1, queueMax: 0 },
+      imageLimiter: { run: () => {} },
+    });
+    assert.deepEqual(merged.imageProcessing, { concurrency: 1, queueMax: 0, queueTimeoutMs: 10000 });
+    assert.equal('imageLimiter' in merged, false);
+    assert.deepEqual(mergeConfig(loadConfig({}), {}).imageProcessing, {
+      concurrency: 2,
+      queueMax: 4,
+      queueTimeoutMs: 10000,
+    });
   });
 });
