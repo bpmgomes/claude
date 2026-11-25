@@ -1,3 +1,5 @@
+const RATE_LIMITED_MESSAGE = 'Muitas tentativas. Aguarde um momento e tente novamente.';
+
 export class AppError extends Error {
   /**
    * @param {number} statusCode
@@ -25,6 +27,40 @@ export class ConflictError extends AppError {
   constructor(code, message, fields) {
     super(409, code, message, fields);
     this.name = 'ConflictError';
+  }
+}
+
+export class NotFoundError extends AppError {
+  constructor(code = 'NOT_FOUND', message = 'Recurso não encontrado.') {
+    super(404, code, message);
+    this.name = 'NotFoundError';
+  }
+}
+
+export const SLUG_TAKEN_MESSAGE = 'Este link já está em uso.';
+
+export class SlugTakenError extends ConflictError {
+  /** @param {string|null} suggestion alternativa livre no momento da resposta */
+  constructor(suggestion = null) {
+    super('SLUG_TAKEN', SLUG_TAKEN_MESSAGE, { slug: SLUG_TAKEN_MESSAGE });
+    this.name = 'SlugTakenError';
+    this.suggestion = typeof suggestion === 'string' ? suggestion : null;
+  }
+}
+
+export class InvalidImageError extends AppError {
+  constructor(message = 'Envie uma imagem PNG ou JPG válida.') {
+    super(422, 'INVALID_IMAGE', message);
+    this.name = 'InvalidImageError';
+  }
+}
+
+export class RateLimitedError extends AppError {
+  /** @param {number} retryAfterSeconds só vai no header Retry-After (o corpo segue o formato do RATE_LIMITED) */
+  constructor(retryAfterSeconds) {
+    super(429, 'RATE_LIMITED', RATE_LIMITED_MESSAGE);
+    this.name = 'RateLimitedError';
+    this.retryAfterHeader = retryAfterSeconds;
   }
 }
 
@@ -62,10 +98,11 @@ export class LoginLockedError extends AppError {
 
 const GENERIC_500 = 'Erro inesperado. Tente novamente.';
 
-function body(code, message, fields, retryAfterSeconds) {
+function body(code, message, fields, retryAfterSeconds, suggestion) {
   const error = { code, message };
   if (fields && Object.keys(fields).length > 0) error.fields = fields;
   if (retryAfterSeconds !== undefined) error.retryAfterSeconds = retryAfterSeconds;
+  if (typeof suggestion === 'string') error.suggestion = suggestion;
   return { error };
 }
 
@@ -76,10 +113,12 @@ export function errorHandler(error, request, reply) {
   if (error instanceof AppError) {
     if (error.retryAfterSeconds !== undefined) {
       reply.header('Retry-After', String(error.retryAfterSeconds));
+    } else if (error.retryAfterHeader !== undefined) {
+      reply.header('Retry-After', String(error.retryAfterHeader));
     }
     return reply
       .status(error.statusCode)
-      .send(body(error.code, error.message, error.fields, error.retryAfterSeconds));
+      .send(body(error.code, error.message, error.fields, error.retryAfterSeconds, error.suggestion));
   }
 
   // Validação de schema do Fastify
@@ -91,7 +130,7 @@ export function errorHandler(error, request, reply) {
   if (error.statusCode === 429) {
     return reply
       .status(429)
-      .send(body('RATE_LIMITED', 'Muitas tentativas. Aguarde um momento e tente novamente.'));
+      .send(body('RATE_LIMITED', RATE_LIMITED_MESSAGE));
   }
 
   const status = error.statusCode;
@@ -99,6 +138,11 @@ export function errorHandler(error, request, reply) {
     return reply.status(415).send(body('UNSUPPORTED_MEDIA_TYPE', 'Envie os dados em formato JSON.'));
   }
   if (status === 413) {
+    // A rota pode definir código e mensagem próprios (ex.: logo, LOGO_TOO_LARGE).
+    const custom = request.routeOptions?.config?.payloadTooLarge;
+    if (custom && typeof custom.code === 'string' && typeof custom.message === 'string') {
+      return reply.status(413).send(body(custom.code, custom.message));
+    }
     return reply.status(413).send(body('PAYLOAD_TOO_LARGE', 'Os dados enviados são grandes demais.'));
   }
   if (status && status >= 400 && status < 500) {

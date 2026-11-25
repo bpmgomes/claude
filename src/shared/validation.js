@@ -1,9 +1,14 @@
-// Validação compartilhada entre backend e browser. Módulo puro, sem imports.
+// Validação compartilhada entre backend e browser. Módulo puro: só importa ./slug.js
+// (também puro), que o browser resolve como /shared/slug.js.
+import { validateSlug } from './slug.js';
 
 export const NAME_MAX = 100;
 export const EMAIL_MAX = 254;
 export const PASSWORD_MIN = 8;
 export const PASSWORD_MAX_BYTES = 72; // limite do bcrypt
+export const BUSINESS_NAME_MAX = 100;
+export const ADDRESS_MAX = 200;
+export const LOGO_MAX_BYTES = 2 * 1024 * 1024; // 2.097.152, inclusive (usado também no browser)
 
 export const MESSAGES = Object.freeze({
   nameRequired: 'Informe seu nome.',
@@ -14,10 +19,21 @@ export const MESSAGES = Object.freeze({
   passwordRequirement: 'A senha deve ter no mínimo 8 caracteres, com pelo menos uma letra e um número.',
   passwordTooLong: 'A senha deve ter no máximo 72 caracteres.',
   passwordRequired: 'Informe sua senha.',
+  businessNameRequired: 'Informe o nome do negócio.',
+  businessNameTooLong: 'O nome deve ter no máximo 100 caracteres.',
+  businessNameInvalid: 'O nome contém caracteres inválidos.',
+  addressRequired: 'Informe o endereço.',
+  addressTooLong: 'O endereço deve ter no máximo 200 caracteres.',
+  addressInvalid: 'O endereço contém caracteres inválidos.',
+  phoneRequired: 'Informe o telefone.',
+  phoneInvalid: 'Informe um telefone com DDD, ex.: (11) 91234-5678.',
+  nothingToUpdate: 'Nada para atualizar.',
 });
 
-// eslint-disable-next-line no-control-regex
-const CONTROL_CHARS = /[\u0000-\u001F\u007F]/;
+// \p{Cc}: controle (inclui \n, \t, U+007F..U+009F). \p{Cf}: formatação invisível e bidi
+// (U+200B, U+200D, U+202E, U+2066..2069, U+00AD, U+FEFF...).
+const FORBIDDEN_CHARS = /[\p{Cc}\p{Cf}]/u;
+const PHONE_ALLOWED = /^[0-9\s().+-]*$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** @returns {string} */
@@ -32,8 +48,139 @@ export function validateName(raw) {
   const name = raw.trim();
   if (name.length === 0) return MESSAGES.nameRequired;
   if ([...name].length > NAME_MAX) return MESSAGES.nameTooLong;
-  if (CONTROL_CHARS.test(name)) return MESSAGES.nameInvalid;
+  if (hasForbiddenChars(name)) return MESSAGES.nameInvalid;
   return null;
+}
+
+/**
+ * Regra de texto comum (AF-01 item 5): caracteres de controle ou de formatação invisível.
+ * @returns {boolean}
+ */
+export function hasForbiddenChars(text) {
+  return typeof text === 'string' && FORBIDDEN_CHARS.test(text);
+}
+
+/** @returns {string} não-string vira ''; trim + NFC */
+export function normalizeText(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw.trim().normalize('NFC');
+}
+
+function validateText(raw, max, messages) {
+  const text = normalizeText(raw);
+  if (text.length === 0) return messages.required;
+  if ([...text].length > max) return messages.tooLong;
+  if (hasForbiddenChars(text)) return messages.invalid;
+  return null;
+}
+
+/** @returns {string|null} */
+export function validateBusinessName(raw) {
+  return validateText(raw, BUSINESS_NAME_MAX, {
+    required: MESSAGES.businessNameRequired,
+    tooLong: MESSAGES.businessNameTooLong,
+    invalid: MESSAGES.businessNameInvalid,
+  });
+}
+
+/** @returns {string|null} */
+export function validateAddress(raw) {
+  return validateText(raw, ADDRESS_MAX, {
+    required: MESSAGES.addressRequired,
+    tooLong: MESSAGES.addressTooLong,
+    invalid: MESSAGES.addressInvalid,
+  });
+}
+
+/**
+ * Remove a máscara do telefone. Aceita só dígitos, espaço, `(`, `)`, `.`, `+` e `-`;
+ * `+` só no início e seguido de 55 (removido).
+ * @returns {string|null} só dígitos, ou null se houver caractere não permitido
+ */
+export function normalizePhone(raw) {
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim();
+  if (!PHONE_ALLOWED.test(text)) return null;
+  const plusCount = (text.match(/\+/g) || []).length;
+  let digits = text.replace(/\D/g, '');
+  if (plusCount > 0) {
+    if (plusCount > 1 || !text.startsWith('+') || !digits.startsWith('55')) return null;
+    digits = digits.slice(2);
+  }
+  return digits;
+}
+
+/** @returns {string|null} */
+export function validatePhone(raw) {
+  if (typeof raw !== 'string' || raw.trim().length === 0) return MESSAGES.phoneRequired;
+  const digits = normalizePhone(raw);
+  if (digits === null || !/^[1-9]{2}/.test(digits)) return MESSAGES.phoneInvalid;
+  if (digits.length === 11 && digits[2] === '9') return null;
+  if (digits.length === 10 && /[2-5]/.test(digits[2])) return null;
+  return MESSAGES.phoneInvalid;
+}
+
+/**
+ * Formata para exibição: "(11) 91234-5678" ou "(11) 3123-4567". Outros valores voltam como vieram.
+ * @param {string} digits
+ */
+export function formatPhone(digits) {
+  if (typeof digits !== 'string') return '';
+  if (/^\d{11}$/.test(digits)) return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+  if (/^\d{10}$/.test(digits)) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  return digits;
+}
+
+const BUSINESS_FIELDS = ['name', 'address', 'phone', 'slug'];
+
+/**
+ * Valida os dados do negócio, juntando os erros de todos os campos.
+ * - partial=false (criação): name, address e phone obrigatórios; slug opcional
+ *   (ausente, null ou '' -> não vem em `value`, e o servidor gera a partir do nome).
+ * - partial=true (PATCH): só os campos presentes (a chave existe no objeto); null ou ''
+ *   em campo presente é erro.
+ * @param {unknown} input
+ * @returns {{ ok: true, value: { name?: string, address?: string, phone?: string, slug?: string } }
+ *         | { ok: false, fields: Record<string, string> }}
+ */
+export function validateBusinessInput(input, { partial = false } = {}) {
+  const src = input && typeof input === 'object' ? input : {};
+  const present = (key) => !partial || Object.prototype.hasOwnProperty.call(src, key);
+  const fields = {};
+  const value = {};
+
+  if (present('name')) {
+    const error = validateBusinessName(src.name);
+    if (error) fields.name = error;
+    else value.name = normalizeText(src.name);
+  }
+  if (present('address')) {
+    const error = validateAddress(src.address);
+    if (error) fields.address = error;
+    else value.address = normalizeText(src.address);
+  }
+  if (present('phone')) {
+    const error = validatePhone(src.phone);
+    if (error) fields.phone = error;
+    else value.phone = normalizePhone(src.phone);
+  }
+  const slugGiven = partial
+    ? Object.prototype.hasOwnProperty.call(src, 'slug')
+    : src.slug !== undefined && src.slug !== null && src.slug !== '';
+  if (slugGiven) {
+    const check = validateSlug(src.slug);
+    if (!check.ok) fields.slug = check.message;
+    else value.slug = check.value;
+  }
+
+  if (Object.keys(fields).length > 0) return { ok: false, fields };
+  return { ok: true, value };
+}
+
+/** @returns {boolean} true se o objeto tem ao menos um campo editável do negócio */
+export function hasBusinessFields(input) {
+  if (!input || typeof input !== 'object') return false;
+  return BUSINESS_FIELDS.some((key) => Object.prototype.hasOwnProperty.call(input, key));
 }
 
 /** @returns {string|null} */

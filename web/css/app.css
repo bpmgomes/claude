@@ -131,3 +131,91 @@ button:disabled {
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
   }
 }
+
+/* AF-05: onboarding e dados do negócio */
+[hidden] {
+  display: none !important;
+}
+
+.slug-input {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid #9ca3af;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.slug-input:focus-within {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+}
+
+.slug-prefix {
+  display: flex;
+  align-items: center;
+  padding: 0 4px 0 12px;
+  color: #4b5563;
+  background: #f3f4f6;
+  white-space: nowrap;
+}
+
+.slug-input input {
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.slug-input input:focus {
+  outline: none;
+}
+
+.slug-input:has(input[aria-invalid="true"]) {
+  border-color: #b91c1c;
+}
+
+.button-small {
+  width: auto;
+  min-height: 36px;
+  margin-top: 8px;
+  padding: 6px 12px;
+  font-size: 0.875rem;
+}
+
+.button-spaced {
+  margin-top: 16px;
+}
+
+.public-link-box {
+  margin: 0 0 24px;
+  padding: 12px 16px;
+  background: #eff6ff;
+  border-radius: 8px;
+}
+
+.public-link-label {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.public-link {
+  display: block;
+  color: #2563eb;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.logo-thumb {
+  display: block;
+  width: 96px;
+  height: 96px;
+  margin: 8px 0;
+  object-fit: contain;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+input[type="file"] {
+  min-height: auto;
+  padding: 8px;
+}

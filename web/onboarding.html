@@ -3,15 +3,82 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bem-vindo · AgendaFácil</title>
+  <title>Seu negócio · AgendaFácil</title>
   <link rel="stylesheet" href="/css/app.css">
   <script type="module" src="/js/onboarding-page.js"></script>
 </head>
 <body>
   <main class="card">
-    <h1 id="greeting">Carregando…</h1>
-    <p class="subtitle">Sua conta foi criada. A configuração do seu negócio (onboarding) chega em breve (AF-05).</p>
-    <button type="button" id="logout-button" class="button-secondary">Sair</button>
+    <p id="loading" aria-live="polite">Carregando…</p>
+
+    <section id="step-form" hidden>
+      <h1>Seu negócio</h1>
+      <p class="subtitle">Passo 1 de 2: conte como seus clientes vão encontrar você.</p>
+
+      <form id="business-form" novalidate>
+        <div class="field">
+          <label for="name">Nome do negócio</label>
+          <input id="name" name="name" type="text" autocomplete="organization" maxlength="100" required
+                 aria-describedby="name-error">
+          <p class="field-error" id="name-error" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label for="address">Endereço</label>
+          <input id="address" name="address" type="text" autocomplete="street-address" maxlength="200" required
+                 aria-describedby="address-error">
+          <p class="field-error" id="address-error" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label for="phone">Telefone</label>
+          <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" required
+                 placeholder="(11) 91234-5678" aria-describedby="phone-error">
+          <p class="field-error" id="phone-error" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label for="slug">Link do seu negócio</label>
+          <div class="slug-input">
+            <span class="slug-prefix" id="slug-prefix">agendafacil.app/</span>
+            <input id="slug" name="slug" type="text" autocomplete="off" autocapitalize="none" spellcheck="false"
+                   maxlength="50" aria-describedby="slug-prefix slug-status slug-error">
+          </div>
+          <p class="help" id="slug-status" aria-live="polite"></p>
+          <p class="field-error" id="slug-error" aria-live="polite"></p>
+          <button type="button" id="slug-suggestion" class="button-secondary button-small" hidden></button>
+        </div>
+
+        <p class="form-error" id="form-error" role="alert" aria-live="polite"></p>
+
+        <button type="submit" id="submit-button">Salvar e continuar</button>
+      </form>
+    </section>
+
+    <section id="step-done" hidden>
+      <h1>Negócio cadastrado!</h1>
+      <p class="subtitle">Passo 2 de 2: compartilhe seu link e, se quiser, envie seu logo.</p>
+
+      <div class="public-link-box">
+        <p class="public-link-label">Seu link:</p>
+        <a id="public-link" class="public-link" rel="noopener"></a>
+        <button type="button" id="copy-link" class="button-secondary button-small">Copiar</button>
+        <p class="help" id="copy-status" aria-live="polite"></p>
+      </div>
+
+      <div class="field">
+        <label for="logo">Logo (opcional)</label>
+        <input id="logo" name="logo" type="file" accept="image/png,image/jpeg" aria-describedby="logo-help logo-error">
+        <p class="help" id="logo-help">PNG ou JPG, até 2 MB. A imagem é ajustada para 256×256.</p>
+        <p class="help" id="logo-status" aria-live="polite"></p>
+        <p class="field-error" id="logo-error" aria-live="polite"></p>
+        <img id="logo-preview" class="logo-thumb" alt="Logo do negócio" width="96" height="96" hidden>
+      </div>
+
+      <button type="button" id="continue-button">Continuar</button>
+    </section>
+
+    <button type="button" id="logout-button" class="button-secondary button-spaced">Sair</button>
   </main>
 </body>
 </html>

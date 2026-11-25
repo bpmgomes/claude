@@ -74,6 +74,19 @@ describe('login', () => {
     assert.deepEqual(meRes.json(), { user: body.user });
   });
 
+  test('redirectTo: /onboarding sem negócio e /servicos com negócio (AF-02 critério 2, AF-05 critério 9)', async () => {
+    const created = await signup();
+    assert.equal((await login()).json().redirectTo, '/onboarding');
+    const business = await app.inject({
+      method: 'POST',
+      url: '/api/business',
+      cookies: { af_session: tokenFrom(created) },
+      payload: { name: 'Salão da Ana', address: 'Rua A, 10', phone: '(11) 91234-5678' },
+    });
+    assert.equal(business.statusCode, 201);
+    assert.equal((await login()).json().redirectTo, '/servicos');
+  });
+
   test('com cookieSecure: true o cookie tem ; Secure (critério 1)', async () => {
     const { app: secureApp } = await buildTestApp({ cookieSecure: true });
     try {

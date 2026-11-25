@@ -4,15 +4,16 @@ import { hashPassword, verifyPassword as defaultVerifyPassword } from './passwor
 import { attemptKey } from './login-attempts.service.js';
 import { toPublicUser } from '../accounts/users.repository.js';
 import { ValidationError, LoginLockedError, InvalidCredentialsError } from '../../http/errors.js';
+import { NEXT_STEP_PATH } from '../businesses/businesses.service.js';
 
 /**
- * Para onde o usuário vai depois do login. Até o AF-05 (configuração do
- * negócio) é sempre o onboarding; o AF-05 troca a regra só aqui.
+ * Para onde o dono vai depois do login: com negócio, para o próximo passo da
+ * configuração (serviços); sem negócio, para o onboarding.
+ * @param {{ hasBusiness: boolean }} state
  * @returns {string}
  */
-// eslint-disable-next-line no-unused-vars
-export function resolvePostLoginRedirect(user) {
-  return '/onboarding';
+export function resolvePostLoginRedirect({ hasBusiness }) {
+  return hasBusiness ? NEXT_STEP_PATH : '/onboarding';
 }
 
 function byteLength(text) {
@@ -24,6 +25,7 @@ export function createAuthService({
   usersRepository,
   sessionsService,
   loginAttemptsService,
+  businessesRepository,
   config,
   // eslint-disable-next-line no-unused-vars
   now = () => new Date(),
@@ -60,7 +62,8 @@ export function createAuthService({
         return sessionsService.createSession(user.id, { conn: tx });
       });
 
-      return { user: toPublicUser(user), session, redirectTo: resolvePostLoginRedirect(user) };
+      const hasBusiness = Boolean(await businessesRepository.findByOwnerId(user.id));
+      return { user: toPublicUser(user), session, redirectTo: resolvePostLoginRedirect({ hasBusiness }) };
     },
 
     /** Revoga só a sessão atual. Idempotente. */

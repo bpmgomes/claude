@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dados do negócio · AgendaFácil</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <script type="module" src="/js/business-edit-page.js"></script>
+</head>
+<body>
+  <main class="card">
+    <h1>Dados do negócio</h1>
+    <p class="subtitle"><a href="/servicos">Voltar</a></p>
+    <p id="loading" aria-live="polite">Carregando…</p>
+
+    <section id="edit-section" hidden>
+      <form id="business-form" novalidate>
+        <div class="field">
+          <label for="name">Nome do negócio</label>
+          <input id="name" name="name" type="text" autocomplete="organization" maxlength="100" required
+                 aria-describedby="name-error">
+          <p class="field-error" id="name-error" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label for="address">Endereço</label>
+          <input id="address" name="address" type="text" autocomplete="street-address" maxlength="200" required
+                 aria-describedby="address-error">
+          <p class="field-error" id="address-error" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label for="phone">Telefone</label>
+          <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" required
+                 aria-describedby="phone-error">
+          <p class="field-error" id="phone-error" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label for="slug">Link do seu negócio</label>
+          <div class="slug-input">
+            <span class="slug-prefix" id="slug-prefix">agendafacil.app/</span>
+            <input id="slug" name="slug" type="text" autocomplete="off" autocapitalize="none" spellcheck="false"
+                   maxlength="50" aria-describedby="slug-prefix slug-warning slug-status slug-error">
+          </div>
+          <p class="help" id="slug-warning">Ao trocar o link, o endereço antigo deixa de funcionar.</p>
+          <p class="help" id="slug-status" aria-live="polite"></p>
+          <p class="field-error" id="slug-error" aria-live="polite"></p>
+          <button type="button" id="slug-suggestion" class="button-secondary button-small" hidden></button>
+        </div>
+
+        <p class="form-error" id="form-error" role="alert" aria-live="polite"></p>
+        <p class="help" id="save-status" aria-live="polite"></p>
+
+        <button type="submit" id="submit-button">Salvar</button>
+      </form>
+
+      <div class="public-link-box">
+        <p class="public-link-label">Seu link:</p>
+        <a id="public-link" class="public-link" rel="noopener"></a>
+      </div>
+
+      <div class="field">
+        <label for="logo">Logo</label>
+        <img id="logo-preview" class="logo-thumb" alt="Logo do negócio" width="96" height="96" hidden>
+        <input id="logo" name="logo" type="file" accept="image/png,image/jpeg" aria-describedby="logo-help logo-error">
+        <p class="help" id="logo-help">PNG ou JPG, até 2 MB. A imagem é ajustada para 256×256.</p>
+        <p class="help" id="logo-status" aria-live="polite"></p>
+        <p class="field-error" id="logo-error" aria-live="polite"></p>
+        <button type="button" id="remove-logo" class="button-secondary button-small" hidden>Remover logo</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

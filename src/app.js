@@ -21,6 +21,10 @@ import authPlugin from './modules/auth/auth.plugin.js';
 import csrfPlugin from './http/csrf.js';
 import accountsRoutes from './modules/accounts/accounts.routes.js';
 import authRoutes from './modules/auth/auth.routes.js';
+import { createBusinessesRepository } from './modules/businesses/businesses.repository.js';
+import { createBusinessesService } from './modules/businesses/businesses.service.js';
+import businessesRoutes from './modules/businesses/businesses.routes.js';
+import { createStorage } from './storage/index.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -33,9 +37,19 @@ export const REDACT_PATHS = [
   'body.password',
 ];
 
+/** Páginas HTML servidas pelo app. Todo caminho aqui precisa estar em RESERVED_SLUGS (teste). */
+export const PAGES = Object.freeze({
+  '/login': 'login.html',
+  '/cadastro': 'cadastro.html',
+  '/onboarding': 'onboarding.html',
+  '/negocio': 'negocio.html',
+  '/servicos': 'servicos.html',
+});
+
 /**
- * @param {object} [overrides] sobrescreve chaves de loadConfig(); aceita também `logStream`
- *   e `now` (relógio `() => Date`, padrão `() => new Date()`, repassado a todos os serviços)
+ * @param {object} [overrides] sobrescreve chaves de loadConfig(); aceita também `logStream`,
+ *   `now` (relógio `() => Date`, padrão `() => new Date()`, repassado a todos os serviços)
+ *   e `storage` (instância de `Storage`; padrão: disco local em `config.uploadsDir`)
  * @returns {Promise<import('fastify').FastifyInstance>}
  */
 export async function buildApp(overrides = {}) {
@@ -64,11 +78,22 @@ export async function buildApp(overrides = {}) {
   const sessionsService = createSessionsService({ sessionsRepository, config, now });
   const accountsService = createAccountsService({ db, usersRepository, sessionsService, config, now });
   const loginAttemptsService = createLoginAttemptsService({ db, loginAttemptsRepository, config, now });
+  const storage = overrides.storage || createStorage(config);
+  const businessesRepository = createBusinessesRepository(db);
+  const businessesService = createBusinessesService({
+    db,
+    businessesRepository,
+    storage,
+    config,
+    now,
+    log: app.log,
+  });
   const authService = createAuthService({
     db,
     usersRepository,
     sessionsService,
     loginAttemptsService,
+    businessesRepository,
     config,
     now,
   });
@@ -81,6 +106,9 @@ export async function buildApp(overrides = {}) {
     loginAttemptsRepository,
     loginAttemptsService,
     authService,
+    storage,
+    businessesRepository,
+    businessesService,
   });
 
   app.setErrorHandler(errorHandler);
@@ -115,12 +143,13 @@ export async function buildApp(overrides = {}) {
   });
 
   app.get('/', (request, reply) => reply.redirect('/login', 302));
-  app.get('/login', (request, reply) => reply.sendFile('login.html'));
-  app.get('/cadastro', (request, reply) => reply.sendFile('cadastro.html'));
-  app.get('/onboarding', (request, reply) => reply.sendFile('onboarding.html'));
+  for (const [path, file] of Object.entries(PAGES)) {
+    app.get(path, (request, reply) => reply.sendFile(file));
+  }
 
   await app.register(accountsRoutes);
   await app.register(authRoutes);
+  await app.register(businessesRoutes);
 
   await app.ready();
   return app;

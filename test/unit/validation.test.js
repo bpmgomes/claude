@@ -145,3 +145,169 @@ describe('validateLogin', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// AF-05: regra de texto (\p{Cc}/\p{Cf}) e dados do negócio
+// ---------------------------------------------------------------------------
+
+const {
+  hasForbiddenChars,
+  normalizeText,
+  validateBusinessName,
+  validateAddress,
+  normalizePhone,
+  validatePhone,
+  formatPhone,
+  validateBusinessInput,
+  hasBusinessFields,
+  LOGO_MAX_BYTES,
+} = await import('../../src/shared/validation.js');
+
+const PHONE_INVALID = 'Informe um telefone com DDD, ex.: (11) 91234-5678.';
+const VALID_BUSINESS = { name: 'Salão da Ana', address: 'Rua A, 10 - Centro', phone: '(11) 91234-5678' };
+
+describe('hasForbiddenChars (AF-01 item 5, critério 5)', () => {
+  for (const ch of ['​', '‍', '‮', '⁦', '﻿', '­', '\n', '\t', '\u0085']) {
+    test(`U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')} é proibido`, () => {
+      assert.equal(hasForbiddenChars(`Ana${ch}Souza`), true);
+    });
+  }
+  test('texto comum, acentos, & e emoji simples são permitidos', () => {
+    for (const text of ['Salão da Ana', 'Café & Cia', 'Barbearia 💈', 'Rua São João, 10 - 2º andar']) {
+      assert.equal(hasForbiddenChars(text), false, text);
+    }
+  });
+  test('validateName (usuário) passa a rejeitar U+202E', () => {
+    assert.equal(validateName('Ana‮anuos'), 'O nome contém caracteres inválidos.');
+  });
+});
+
+describe('normalizeText', () => {
+  test('trim + NFC; não-string vira vazio', () => {
+    assert.equal(normalizeText('  Salão '), 'Salão');
+    assert.equal(normalizeText(null), '');
+    assert.equal(normalizeText(12), '');
+  });
+});
+
+describe('nome do negócio e endereço (critérios 3, 5)', () => {
+  test('vazio, só espaços e não-string', () => {
+    for (const v of ['', '   ', undefined, null, 42, {}]) {
+      assert.equal(validateBusinessName(v), 'Informe o nome do negócio.');
+      assert.equal(validateAddress(v), 'Informe o endereço.');
+    }
+  });
+
+  test('nome: 100 code points aceitos, 101 recusados (acentos e emoji contam 1)', () => {
+    assert.equal(validateBusinessName('á'.repeat(100)), null);
+    assert.equal(validateBusinessName('💈'.repeat(100)), null);
+    assert.equal(validateBusinessName('a'.repeat(101)), 'O nome deve ter no máximo 100 caracteres.');
+    assert.equal(validateBusinessName('💈'.repeat(101)), 'O nome deve ter no máximo 100 caracteres.');
+    // 100 letras com acento combinante viram 100 code points após NFC
+    assert.equal(validateBusinessName('á'.repeat(100)), null);
+  });
+
+  test('endereço: 200 aceitos, 201 recusados', () => {
+    assert.equal(validateAddress('é'.repeat(200)), null);
+    assert.equal(validateAddress('a'.repeat(201)), 'O endereço deve ter no máximo 200 caracteres.');
+  });
+
+  test('caracteres invisíveis/bidi recusados', () => {
+    assert.equal(validateBusinessName('Salão‮'), 'O nome contém caracteres inválidos.');
+    assert.equal(validateAddress('Rua​A'), 'O endereço contém caracteres inválidos.');
+    assert.equal(validateAddress('Rua A\n10'), 'O endereço contém caracteres inválidos.');
+  });
+});
+
+describe('telefone (critério 4)', () => {
+  for (const [raw, digits] of [
+    ['(11) 91234-5678', '11912345678'],
+    ['11912345678', '11912345678'],
+    ['+55 11 91234-5678', '11912345678'],
+    ['(11) 3123-4567', '1131234567'],
+    ['11 3123.4567', '1131234567'],
+  ]) {
+    test(`${raw} é aceito como ${digits}`, () => {
+      assert.equal(validatePhone(raw), null);
+      assert.equal(normalizePhone(raw), digits);
+    });
+  }
+
+  for (const raw of [
+    '1234-5678',
+    '91234-5678',
+    '(01) 91234-5678',
+    '(11) 81234-5678',
+    '(11) 9123-4567',
+    '+1 11 91234-5678',
+    '11a912345678',
+    '119123456789',
+    '11 9+1234-5678',
+    '(11) 6123-4567',
+  ]) {
+    test(`${raw} é rejeitado`, () => {
+      assert.equal(validatePhone(raw), PHONE_INVALID);
+    });
+  }
+
+  test('vazio e não-string pedem o telefone', () => {
+    for (const v of ['', '   ', undefined, null, 11912345678]) {
+      assert.equal(validatePhone(v), 'Informe o telefone.');
+    }
+    assert.equal(normalizePhone('11a9'), null);
+  });
+
+  test('formatPhone', () => {
+    assert.equal(formatPhone('11912345678'), '(11) 91234-5678');
+    assert.equal(formatPhone('1131234567'), '(11) 3123-4567');
+    assert.equal(formatPhone('123'), '123');
+    assert.equal(formatPhone(undefined), '');
+  });
+});
+
+describe('validateBusinessInput', () => {
+  test('ok devolve valores normalizados; slug ausente não vem em value', () => {
+    const r = validateBusinessInput({ ...VALID_BUSINESS, name: '  Salão da Ana  ' });
+    assert.deepEqual(r, {
+      ok: true,
+      value: { name: 'Salão da Ana', address: 'Rua A, 10 - Centro', phone: '11912345678' },
+    });
+  });
+
+  test('slug presente é validado e normalizado', () => {
+    assert.equal(validateBusinessInput({ ...VALID_BUSINESS, slug: ' Salao-Da-Ana ' }).value.slug, 'salao-da-ana');
+    assert.equal(validateBusinessInput({ ...VALID_BUSINESS, slug: '' }).ok, true);
+    const reserved = validateBusinessInput({ ...VALID_BUSINESS, slug: 'admin' });
+    assert.equal(reserved.fields.slug, 'Este link é reservado. Escolha outro.');
+  });
+
+  test('junta os erros de todos os campos (critério 3)', () => {
+    const r = validateBusinessInput({ slug: 'a' });
+    assert.equal(r.ok, false);
+    assert.deepEqual(Object.keys(r.fields).sort(), ['address', 'name', 'phone', 'slug']);
+    for (const v of [null, undefined, 'x', 42, []]) {
+      assert.deepEqual(Object.keys(validateBusinessInput(v).fields).sort(), ['address', 'name', 'phone']);
+    }
+  });
+
+  test('partial só valida os campos presentes; null ou "" é erro', () => {
+    assert.deepEqual(validateBusinessInput({ phone: '(11) 3123-4567' }, { partial: true }), {
+      ok: true,
+      value: { phone: '1131234567' },
+    });
+    assert.deepEqual(validateBusinessInput({}, { partial: true }), { ok: true, value: {} });
+    const r = validateBusinessInput({ name: null, slug: '' }, { partial: true });
+    assert.deepEqual(Object.keys(r.fields).sort(), ['name', 'slug']);
+  });
+
+  test('hasBusinessFields', () => {
+    assert.equal(hasBusinessFields({}), false);
+    assert.equal(hasBusinessFields({ ownerId: 'x' }), false);
+    assert.equal(hasBusinessFields({ slug: 'x' }), true);
+    assert.equal(hasBusinessFields(null), false);
+  });
+
+  test('LOGO_MAX_BYTES é 2 MiB', () => {
+    assert.equal(LOGO_MAX_BYTES, 2_097_152);
+  });
+});

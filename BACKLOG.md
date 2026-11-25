@@ -68,7 +68,7 @@ Critérios de aceite
 ## E2 — Cadastro do negócio
 
 ### AF-05 · Onboarding do negócio
-Tipo: História · Prioridade: Alta · Pontos: 3 · Status: TODO
+Tipo: História · Prioridade: Alta · Pontos: 3 · Status: DONE
 
 Como dono, quero informar nome, endereço, telefone e logo do negócio.
 

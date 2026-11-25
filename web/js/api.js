@@ -16,7 +16,10 @@ export async function requestJson(url, { method = 'GET', body, fetchFn = globalT
   } catch {
     return { ok: false, status: 0, body: null, error: { code: 'NETWORK_ERROR', message: GENERIC_ERROR_MESSAGE } };
   }
+  return parseResponse(response);
+}
 
+async function parseResponse(response) {
   let parsed = null;
   try {
     parsed = await response.json();
@@ -31,4 +34,26 @@ export async function requestJson(url, { method = 'GET', body, fetchFn = globalT
       ? parsed.error
       : { code: 'UNKNOWN_ERROR', message: GENERIC_ERROR_MESSAGE };
   return { ok: false, status: response.status, body: parsed, error };
+}
+
+/**
+ * Envia um corpo binário (ex.: o File do logo). Mesmo contrato de `requestJson`: nunca lança.
+ * @returns {Promise<{ ok: boolean, status: number, body: any, error: { code: string, message: string, fields?: Record<string,string> } | null }>}
+ */
+export async function requestBinary(
+  url,
+  { method = 'PUT', body, contentType = 'application/octet-stream', fetchFn = globalThis.fetch } = {},
+) {
+  let response;
+  try {
+    response = await fetchFn(url, {
+      method,
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'Content-Type': contentType },
+      body,
+    });
+  } catch {
+    return { ok: false, status: 0, body: null, error: { code: 'NETWORK_ERROR', message: GENERIC_ERROR_MESSAGE } };
+  }
+  return parseResponse(response);
 }

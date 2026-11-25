@@ -11,6 +11,7 @@ import { createSessionsService } from '../../src/modules/auth/sessions.service.j
 import { createLoginAttemptsRepository } from '../../src/modules/auth/login-attempts.repository.js';
 import { createLoginAttemptsService } from '../../src/modules/auth/login-attempts.service.js';
 import { createAuthService } from '../../src/modules/auth/auth.service.js';
+import { createBusinessesRepository } from '../../src/modules/businesses/businesses.repository.js';
 import { hashPassword, verifyPassword } from '../../src/modules/auth/password.js';
 import { LoginLockedError, InvalidCredentialsError } from '../../src/http/errors.js';
 
@@ -41,6 +42,7 @@ beforeEach(async () => {
     usersRepository,
     sessionsService,
     loginAttemptsService,
+    businessesRepository: createBusinessesRepository(db),
     config,
     verifyPassword: spy,
   });
