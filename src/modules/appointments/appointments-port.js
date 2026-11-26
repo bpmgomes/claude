@@ -23,7 +23,8 @@
  *
  * countFutureOutsideHours é chamado DEPOIS do commit da grade, com o `db` global (sem `conn`), como
  * countFutureByService. Futuro = não cancelado, início > nowIso e fora da grade ATUAL do profissional
- * (lida pelo AF-11 com workingHoursRepository.findWeekly e convertida no fuso do negócio).
+ * (lida pelo AF-11 com workingHoursRepository.findWeeklyByBusiness, ou findWeekly com no máximo
+FIND_WEEKLY_IDS_MAX ids, e convertida no fuso do negócio).
  */
 
 /** Implementação nula até o AF-11: nunca há agendamentos. @type {AppointmentsPort} */

@@ -1,6 +1,7 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import sharp from 'sharp';
 import { buildTestApp } from '../helpers/test-app.js';
 import { signupAndLogin, createBusinessFor, createService, createProfessional } from '../helpers/session.js';
 import {
@@ -394,6 +395,35 @@ describe('foto (critérios 11, 12, 13)', () => {
     assert.deepEqual([meta.format, meta.width, meta.height], ['png', 256, 256]);
     assert.equal(meta.exif, undefined);
     assert.equal(saved.includes(Buffer.from('segredo')), false);
+  });
+
+  test('PNG 800x400: foto 256x256 com fit cover, sem pixel transparente nos cantos (AF-09)', async () => {
+    const p = await createProfessional(app, ana);
+    const res = await putPhoto(ana, p.id, await pngOf(800, 400));
+    assert.equal(res.statusCode, 200);
+    const saved = await storage.get(keyOf(res.json().professional.photoUrl));
+    const { data, info } = await sharp(saved).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    assert.deepEqual([info.width, info.height], [256, 256]);
+    const alphaAt = (x, y) => data[(y * info.width + x) * info.channels + 3];
+    for (const [x, y] of [[0, 0], [255, 0], [0, 255], [255, 255], [128, 0], [128, 255]]) {
+      assert.equal(alphaAt(x, y), 255, `pixel ${x},${y}`);
+    }
+
+    // O logo continua com `contain`: faixas transparentes em cima e embaixo.
+    const logo = await app.inject({
+      method: 'PUT',
+      url: '/api/business/logo',
+      cookies: ana,
+      headers: { 'content-type': 'image/png' },
+      payload: await pngOf(800, 400),
+    });
+    assert.equal(logo.statusCode, 200);
+    const logoPng = await storage.get(keyOf(logo.json().business.logoUrl));
+    const raw = await sharp(logoPng).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const logoAlpha = (x, y) => raw.data[(y * raw.info.width + x) * raw.info.channels + 3];
+    assert.equal(logoAlpha(0, 0), 0);
+    assert.equal(logoAlpha(255, 255), 0);
+    assert.equal(logoAlpha(128, 128), 255);
   });
 
   test('GIF, SVG como png, vazio, JPEG truncado e PNG 5000x10: 422 INVALID_IMAGE', async () => {

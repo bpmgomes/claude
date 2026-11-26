@@ -5,6 +5,7 @@ import {
   normalizeSlug,
   validateSlug,
   withSuffix,
+  parsePublicSlug,
   RESERVED_SLUGS,
   SLUG_MAX,
   SLUG_RE,
@@ -96,5 +97,57 @@ describe('withSuffix', () => {
     assert.match(out, SLUG_RE);
     assert.equal(out, `${'a'.repeat(47)}-12`);
     assert.equal(withSuffix('a'.repeat(50), 9999).length, 50);
+  });
+});
+
+describe('parsePublicSlug (AF-09, critérios 6 e 21)', () => {
+  test('slug canônico dá ok', () => {
+    assert.deepEqual(parsePublicSlug('salao-da-ana'), { kind: 'ok', slug: 'salao-da-ana' });
+    assert.deepEqual(parsePublicSlug('abc'), { kind: 'ok', slug: 'abc' });
+    assert.deepEqual(parsePublicSlug('a'.repeat(50)), { kind: 'ok', slug: 'a'.repeat(50) });
+  });
+
+  test('maiúsculas dão redirect para o minúsculo', () => {
+    assert.deepEqual(parsePublicSlug('Salao-Da-Ana'), { kind: 'redirect', slug: 'salao-da-ana' });
+    assert.deepEqual(parsePublicSlug('SALAO'), { kind: 'redirect', slug: 'salao' });
+  });
+
+  const invalid = [
+    'ab',
+    'a'.repeat(51),
+    'salão',
+    'a--b',
+    '-a',
+    'a-',
+    'a_b',
+    'a.html',
+    'admin',
+    'ADMIN',
+    'İstanbul',
+    'abc\u0000',
+    'abc\n',
+    'abc‮',
+    ' abc',
+    '',
+    undefined,
+    null,
+    123,
+    {},
+  ];
+  for (const raw of invalid) {
+    test(`${JSON.stringify(raw)} dá invalid sem carregar a entrada`, () => {
+      const result = parsePublicSlug(raw);
+      assert.deepEqual(result, { kind: 'invalid' });
+      assert.equal('slug' in result, false);
+    });
+  }
+
+  test('string de 10.000 caracteres: invalid sem regex (menos de 5 ms)', () => {
+    const huge = 'a'.repeat(10_000);
+    const started = process.hrtime.bigint();
+    const result = parsePublicSlug(huge);
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.deepEqual(result, { kind: 'invalid' });
+    assert.ok(elapsedMs < 5, `${elapsedMs} ms`);
   });
 });

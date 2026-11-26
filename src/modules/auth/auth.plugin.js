@@ -34,6 +34,8 @@ async function authPlugin(app) {
   app.decorateRequest('sessionId', null);
 
   app.addHook('onRequest', async (request) => {
+    // Rotas públicas (AF-09, critério 22): a sessão do dono não é lida nem tocada.
+    if (request.routeOptions?.config?.publicRoute === true) return;
     const token = request.cookies?.[SESSION_COOKIE];
     if (!token) return;
     const { sessionsService, usersRepository } = app.services;

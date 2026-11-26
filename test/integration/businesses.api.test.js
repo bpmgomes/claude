@@ -356,7 +356,7 @@ describe('edição (critérios 8, 21)', () => {
     assert.deepEqual(Object.keys(res.json().error.fields).sort(), ['name', 'phone']);
   });
 
-  test('troca de slug libera o antigo na hora', async () => {
+  test('troca de slug: o antigo fica em quarentena para outros donos e livre para o próprio (AF-09, 24)', async () => {
     const res = await patch(ana, { slug: 'ana-beleza' });
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().business.slug, 'ana-beleza');
@@ -367,12 +367,13 @@ describe('edição (critérios 8, 21)', () => {
 
     const bia = await signupAndLogin(app, { email: 'bia@x.com' });
     const other = await create(bia, { ...VALID, slug: 'salao-da-ana' });
-    assert.equal(other.statusCode, 201);
+    assert.equal(other.statusCode, 409);
+    assert.equal(other.json().error.code, 'SLUG_TAKEN');
+    assert.equal(other.json().error.suggestion, 'salao-da-ana-2');
 
     const back = await patch(ana, { slug: 'salao-da-ana' });
-    assert.equal(back.statusCode, 409);
-    assert.equal(back.json().error.code, 'SLUG_TAKEN');
-    assert.equal(back.json().error.suggestion, 'salao-da-ana-2');
+    assert.equal(back.statusCode, 200);
+    assert.equal(back.json().business.slug, 'salao-da-ana');
   });
 
   test('o próprio slug atual no PATCH -> 200', async () => {
@@ -418,6 +419,15 @@ describe('checagem de disponibilidade (critérios 16, 18, 19)', () => {
     assert.equal(invalid.available, false);
     assert.equal(invalid.reason, 'INVALID');
     assert.equal('suggestion' in invalid, false);
+    // AF-05 item 6: INVALID não ecoa a entrada.
+    assert.equal('slug' in invalid, false);
+    assert.equal(typeof invalid.message, 'string');
+
+    const huge = await availability(bia, 'a'.repeat(10_000));
+    assert.equal(huge.statusCode, 200);
+    assert.deepEqual(Object.keys(huge.json()).sort(), ['available', 'message', 'reason']);
+    assert.equal(huge.json().reason, 'INVALID');
+    assert.ok(Buffer.byteLength(huge.body) < 300, `corpo com ${huge.body.length} bytes`);
 
     const missing = await api('GET', '/api/business/slug-availability', bia);
     assert.equal(missing.statusCode, 200);

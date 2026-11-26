@@ -1,4 +1,4 @@
-import { createRouteGuards, authOnly } from '../../http/route-guards.js';
+import { createRouteGuards, createPublicRouteGuards, authOnly } from '../../http/route-guards.js';
 import { NotFoundError, InvalidImageError, ImageBusyError } from '../../http/errors.js';
 import { LOGO_MAX_BYTES } from '../../shared/validation.js';
 import { toOwnerBusiness } from './businesses.repository.js';
@@ -88,7 +88,8 @@ export default async function businessesRoutes(app) {
 
   // Público (usado pelo AF-09). Só entrega arquivo referenciado no banco; nada é interpretado.
   // `X-Content-Type-Options: nosniff` vem do helmet (global).
-  app.get('/media/logos/:file', async (request, reply) => {
+  // Guards públicos próprios (AF-09, critério 19): limite por IP, sem ler a sessão.
+  app.get('/media/logos/:file', createPublicRouteGuards(config, 'publicMedia'), async (request, reply) => {
     const { file } = request.params;
     if (typeof file !== 'string' || !LOGO_FILE_RE.test(file)) throw new NotFoundError();
     const key = `logos/${file}`;

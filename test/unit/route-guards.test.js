@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { createRouteGuards, authOnly } from '../../src/http/route-guards.js';
+import { createRouteGuards, createPublicRouteGuards, authOnly } from '../../src/http/route-guards.js';
+import { rateLimitKey } from '../../src/http/ip-key.js';
 import { requireAuth } from '../../src/modules/auth/auth.plugin.js';
 
 const CONFIG = {
@@ -58,5 +59,42 @@ describe('authOnly', () => {
     assert.deepEqual(a.onRequest, [requireAuth]);
     assert.notEqual(a.onRequest, b.onRequest);
     assert.equal(Object.isFrozen(a.onRequest), false);
+  });
+});
+
+describe('createPublicRouteGuards (AF-09, critério 19)', () => {
+  const PUBLIC = { rateLimit: { enabled: true, timeWindow: '1 minute', publicPage: { perIp: 120 } } };
+
+  test('sem requireAuth, com publicRoute, limite por IP e keyGenerator /64', () => {
+    const guards = createPublicRouteGuards(PUBLIC, 'publicPage');
+    assert.deepEqual(guards.onRequest, []);
+    assert.equal(guards.onRequest.includes(requireAuth), false);
+    assert.equal(guards.config.publicRoute, true);
+    assert.equal(guards.config.rateLimit.max, 120);
+    assert.equal(guards.config.rateLimit.timeWindow, '1 minute');
+    const key = guards.config.rateLimit.keyGenerator;
+    assert.equal(typeof key, 'function');
+    assert.equal(key({ ip: '2001:db8::1' }), rateLimitKey('2001:db8::2'));
+    assert.equal(key({ ip: '10.0.0.1' }), '10.0.0.1');
+  });
+
+  test('objetos novos a cada chamada e não congelados', () => {
+    const a = createPublicRouteGuards(PUBLIC, 'publicPage');
+    const b = createPublicRouteGuards(PUBLIC, 'publicPage');
+    assert.notEqual(a.onRequest, b.onRequest);
+    assert.notEqual(a.config, b.config);
+    assert.notEqual(a.config.rateLimit, b.config.rateLimit);
+    assert.equal(Object.isFrozen(a.onRequest), false);
+    a.onRequest.push(() => {});
+    assert.equal(b.onRequest.length, 0);
+  });
+
+  test('com enabled=false: só publicRoute, sem rateLimit', () => {
+    const guards = createPublicRouteGuards({ rateLimit: { ...PUBLIC.rateLimit, enabled: false } }, 'publicPage');
+    assert.deepEqual(guards, { onRequest: [], config: { publicRoute: true } });
+  });
+
+  test('bucket desconhecido lança', () => {
+    assert.throws(() => createPublicRouteGuards(PUBLIC, 'naoExiste'), /Bucket/);
   });
 });

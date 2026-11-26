@@ -33,6 +33,13 @@ import professionalsRoutes from './modules/professionals/professionals.routes.js
 import { createWorkingHoursRepository } from './modules/working-hours/working-hours.repository.js';
 import { createWorkingHoursService } from './modules/working-hours/working-hours.service.js';
 import workingHoursRoutes from './modules/working-hours/working-hours.routes.js';
+import { createPublicPageService } from './modules/public-page/public-page.service.js';
+import publicPageRoutes, {
+  sendNotFoundPage,
+  sendRateLimitedPage,
+  wantsHtmlNotFound,
+} from './modules/public-page/public-page.routes.js';
+import { publicKeyGenerator } from './http/route-guards.js';
 import { createImageLimiter } from './images/image-limiter.js';
 import { createStorage } from './storage/index.js';
 
@@ -76,7 +83,18 @@ export async function buildApp(overrides = {}) {
   };
   if (overrides.logStream) logger.stream = overrides.logStream;
 
-  const app = Fastify({ logger, bodyLimit: 16 * 1024, trustProxy: config.trustProxy });
+  const app = Fastify({
+    logger,
+    bodyLimit: 16 * 1024,
+    trustProxy: config.trustProxy,
+    // URL malformada (ex.: /%E0%A4%A) em GET/HEAD fora da API: o mesmo 404 HTML uniforme da
+    // página pública, sem eco (AF-09, critério 21). Outros erros de framework: JSON 400 fixo.
+    frameworkErrors: (error, request, reply) => {
+      const notFoundCodes = ['FST_ERR_BAD_URL', 'FST_ERR_MAX_PARAM_LENGTH'];
+      if (notFoundCodes.includes(error.code) && wantsHtmlNotFound(request)) return sendNotFoundPage(reply);
+      return reply.status(400).send({ error: { code: 'VALIDATION_ERROR', message: 'Requisição inválida.' } });
+    },
+  });
   app.decorate('config', config);
   // A API só aceita JSON: o Fastify 5 traz parser de text/plain por padrão, e
   // removê-lo faz qualquer outro content-type responder 415 (mitigação de CSRF, R5).
@@ -134,6 +152,12 @@ export async function buildApp(overrides = {}) {
     now,
     log: app.log,
   });
+  const publicPageService = createPublicPageService({
+    businessesRepository,
+    servicesRepository,
+    professionalsRepository,
+    config,
+  });
   const authService = createAuthService({
     db,
     usersRepository,
@@ -161,12 +185,17 @@ export async function buildApp(overrides = {}) {
     professionalsService,
     workingHoursRepository,
     workingHoursService,
+    publicPageService,
     imageLimiter,
   });
 
-  app.setErrorHandler(errorHandler);
-  app.setNotFoundHandler((request, reply) => {
-    reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Recurso não encontrado.' } });
+  // Caminho recusado pelo @fastify/static (ex.: segmento acima de 255 bytes, que não casa
+  // `/:slug`): para navegação, segue para o 404 uniforme (com o limite do notFound), sem eco.
+  app.setErrorHandler((error, request, reply) => {
+    if (error && error.code === 'FST_STATIC_FORBIDDEN_PATH' && wantsHtmlNotFound(request)) {
+      return reply.callNotFound();
+    }
+    return errorHandler(error, request, reply);
   });
 
   await app.register(helmet, {
@@ -186,6 +215,30 @@ export async function buildApp(overrides = {}) {
   if (config.rateLimit.enabled) {
     await app.register(rateLimit, { global: false });
   }
+
+  // 404 fora das rotas (AF-09, 4.1): GET/HEAD fora de /api/, /media/ e /shared/ recebem o 404
+  // HTML uniforme (slug acima do maxParamLength, arquivo estático inexistente); o resto, o JSON
+  // NOT_FOUND. Com rate limit ligado, contador próprio com o bucket publicPage (o 404 conta).
+  const notFoundOptions = {};
+  if (config.rateLimit.enabled) {
+    const limit = app.rateLimit({
+      max: config.rateLimit.publicPage.perIp,
+      timeWindow: config.rateLimit.timeWindow,
+      keyGenerator: publicKeyGenerator,
+    });
+    notFoundOptions.preHandler = async (request, reply) => {
+      try {
+        await limit(request, reply);
+      } catch (err) {
+        if (err && err.statusCode === 429 && wantsHtmlNotFound(request)) return sendRateLimitedPage(reply);
+        throw err;
+      }
+    };
+  }
+  app.setNotFoundHandler(notFoundOptions, (request, reply) => {
+    if (wantsHtmlNotFound(request)) return sendNotFoundPage(reply);
+    return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Recurso não encontrado.' } });
+  });
   await app.register(authPlugin);
 
   await app.register(fastifyStatic, { root: join(ROOT, 'web'), prefix: '/', index: false });
@@ -206,6 +259,8 @@ export async function buildApp(overrides = {}) {
   await app.register(servicesRoutes);
   await app.register(professionalsRoutes);
   await app.register(workingHoursRoutes);
+  // Por último: `/:slug` só casa o que nenhuma rota estática casou.
+  await app.register(publicPageRoutes);
 
   await app.ready();
   return app;

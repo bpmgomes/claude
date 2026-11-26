@@ -58,6 +58,15 @@ describe('loadConfig', () => {
     assert.deepEqual(c.imageProcessing, { concurrency: 2, queueMax: 4, queueTimeoutMs: 10000 });
   });
 
+  test('padrões do AF-09: publicPage e publicMedia só por IP', () => {
+    const c = loadConfig({});
+    assert.deepEqual(c.rateLimit.publicPage, { perIp: 120 });
+    assert.deepEqual(c.rateLimit.publicMedia, { perIp: 600 });
+    const merged = mergeConfig(c, { rateLimit: { publicPage: { perIp: 2 } } });
+    assert.deepEqual(merged.rateLimit.publicPage, { perIp: 2 });
+    assert.deepEqual(merged.rateLimit.publicMedia, { perIp: 600 });
+  });
+
   test('padrões do AF-02 (critério 22)', () => {
     const c = loadConfig({});
     assert.equal(c.trustProxy, false);

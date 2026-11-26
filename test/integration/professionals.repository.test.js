@@ -8,6 +8,7 @@ import { createUsersRepository } from '../../src/modules/accounts/users.reposito
 import { createBusinessesRepository } from '../../src/modules/businesses/businesses.repository.js';
 import { createServicesRepository } from '../../src/modules/services/services.repository.js';
 import { createProfessionalsRepository } from '../../src/modules/professionals/professionals.repository.js';
+import { createWorkingHoursRepository } from '../../src/modules/working-hours/working-hours.repository.js';
 import { textKey } from '../../src/shared/validation.js';
 
 const NOW = '2026-03-01T12:00:00.000Z';
@@ -265,4 +266,83 @@ test('listagem carrega serviços sem N+1 (2 consultas para 5 profissionais)', as
   queries = 0;
   await createProfessionalsRepository(counting).listByBusinessId(businessB);
   assert.equal(queries, 1, 'lista vazia não faz a 2ª consulta');
+});
+
+// ---------------------------------------------------------------------------
+// AF-09 (critérios 4 e 5, decisão 4): contrato público com grade de horários.
+// ---------------------------------------------------------------------------
+
+async function giveHours(professionalId, businessId) {
+  await createWorkingHoursRepository(db).replaceDays(
+    professionalId,
+    businessId,
+    [{ weekday: 1, intervals: [{ startMinute: 540, endMinute: 600 }] }],
+    NOW,
+  );
+}
+
+test('findListedByBusinessId exclui rascunho, removido, só com serviço desativado e sem grade', async () => {
+  const corte = await makeService(businessA, 'Corte');
+  const barba = await makeService(businessA, 'Barba');
+  const inactive = await makeService(businessA, 'Coloração', false);
+  const ana = await makeProfessional(businessA, 'Ana', [corte, barba, inactive]);
+  const bia = await makeProfessional(businessA, 'Bia', [corte]);
+  const draft = await makeProfessional(businessA, 'Rascunho');
+  const onlyInactive = await makeProfessional(businessA, 'Duda', [inactive]);
+  const noHours = await makeProfessional(businessA, 'Eva', [corte]);
+  const removed = await makeProfessional(businessA, 'Carla', [corte]);
+  for (const id of [ana, bia, draft, onlyInactive, removed]) await giveHours(id, businessA);
+  await repo.markRemoved(removed, businessA, NOW);
+
+  let listed = await repo.findListedByBusinessId(businessA);
+  assert.deepEqual(listed.map((p) => p.id), [ana, bia]);
+  assert.deepEqual(listed[0].services.map((s) => s.name), ['Barba', 'Corte'], 'só ativos, na ordem do AF-06');
+  assert.ok(listed[0].services.every((s) => s.active === true));
+  assert.deepEqual(listed[1].services.map((s) => s.id), [corte]);
+
+  await giveHours(noHours, businessA);
+  listed = await repo.findListedByBusinessId(businessA);
+  assert.deepEqual(listed.map((p) => p.name), ['Ana', 'Bia', 'Eva']);
+});
+
+test('findListedByBusinessId não vaza profissional nem serviço de outro negócio', async () => {
+  const corteA = await makeService(businessA, 'Corte');
+  const corteB = await makeService(businessB, 'Corte');
+  const ana = await makeProfessional(businessA, 'Ana', [corteA]);
+  const bia = await makeProfessional(businessB, 'Bia', [corteB]);
+  await giveHours(ana, businessA);
+  await giveHours(bia, businessB);
+  const listedA = await repo.findListedByBusinessId(businessA);
+  assert.deepEqual(listedA.map((p) => p.id), [ana]);
+  assert.deepEqual(listedA[0].services.map((s) => s.id), [corteA]);
+  assert.deepEqual((await repo.findListedByBusinessId(businessB)).map((p) => p.id), [bia]);
+});
+
+test('findListedByBusinessId faz 2 consultas, nenhuma com IN (', async () => {
+  const ids = [];
+  const corte = await makeService(businessA, 'Corte');
+  for (const name of ['Ana', 'Bia', 'Cris', 'Duda', 'Eva']) {
+    const id = await makeProfessional(businessA, name, [corte]);
+    await giveHours(id, businessA);
+    ids.push(id);
+  }
+  const calls = [];
+  const counting = {
+    all: (sql, params) => {
+      calls.push(sql);
+      return db.all(sql, params);
+    },
+    get: (sql, params) => {
+      calls.push(sql);
+      return db.get(sql, params);
+    },
+  };
+  const listed = await createProfessionalsRepository(counting).findListedByBusinessId(businessA);
+  assert.equal(listed.length, 5);
+  assert.equal(calls.length, 2);
+  for (const sql of calls) assert.doesNotMatch(sql, /\bIN\s*\(/i);
+  // Sem ninguém listado: uma consulta só.
+  calls.length = 0;
+  assert.deepEqual(await createProfessionalsRepository(counting).findListedByBusinessId(businessB), []);
+  assert.equal(calls.length, 1);
 });

@@ -56,7 +56,16 @@ const { signupAndLogin, createBusinessFor, createService, createProfessional, pu
 );
 const { pngOf } = await import('../helpers/images.js');
 
-function businessLimits({ businessWrite, logoUpload, serviceWrite, professionalWrite, professionalPhoto, hoursWrite } = {}) {
+function businessLimits({
+  businessWrite,
+  logoUpload,
+  serviceWrite,
+  professionalWrite,
+  professionalPhoto,
+  hoursWrite,
+  publicPage,
+  publicMedia,
+} = {}) {
   return {
     enabled: true,
     signupMax: 100,
@@ -66,6 +75,8 @@ function businessLimits({ businessWrite, logoUpload, serviceWrite, professionalW
     professionalWrite: professionalWrite || { perUser: 100, perIp: 100 },
     professionalPhoto: professionalPhoto || { perUser: 100, perIp: 100 },
     hoursWrite: hoursWrite || { perUser: 100, perIp: 100 },
+    publicPage: publicPage || { perIp: 100 },
+    publicMedia: publicMedia || { perIp: 100 },
   };
 }
 
@@ -522,6 +533,133 @@ test('sem sessão, PUT /hours responde 401 e não consome o limite do usuário',
     const professional = await createProfessional(app, ana);
     for (let i = 0; i < 3; i++) assert.equal((await putHours(app, {}, professional.id, WEEK_9_TO_18)).statusCode, 401);
     assert.equal((await putHours(app, ana, professional.id, WEEK_9_TO_18)).statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AF-09 (critérios 19 e 20): rotas públicas com limite por IP e guards próprios.
+// ---------------------------------------------------------------------------
+
+const { seedPublicBusiness } = await import('../helpers/public-fixture.js');
+const { RATE_LIMITED_HTML, NOT_FOUND_HTML } = await import('../../src/modules/public-page/public-page.render.js');
+
+const visit = (app, url, remoteAddress = '10.1.1.1', extra = {}) =>
+  app.inject({ method: 'GET', url, remoteAddress, ...extra });
+
+async function publicApp(limits) {
+  const { app } = await buildTestApp({ rateLimit: businessLimits(limits) });
+  const seed = await seedPublicBusiness(app, { services: 1, professionals: 1, logo: 'realistic' });
+  return { app, seed };
+}
+
+function assertRateLimitedHtml(res) {
+  assert.equal(res.statusCode, 429);
+  assert.equal(res.headers['content-type'], 'text/html; charset=utf-8');
+  assert.equal(res.headers['cache-control'], 'no-store');
+  assert.ok(Number(res.headers['retry-after']) >= 1);
+  assert.ok(res.rawPayload.equals(RATE_LIMITED_HTML));
+  assert.match(res.body, /Muitos acessos em pouco tempo\. Aguarde um instante e recarregue a página\./);
+}
+
+test('publicPage.perIp 2: o 3º GET /<slug> do mesmo IP dá 429 HTML com Retry-After; outro IP passa', async () => {
+  const { app, seed } = await publicApp({ publicPage: { perIp: 2 } });
+  try {
+    const statuses = [];
+    let last;
+    for (let i = 0; i < 3; i++) {
+      last = await visit(app, `/${seed.slug}`);
+      statuses.push(last.statusCode);
+    }
+    assert.deepEqual(statuses, [200, 200, 429]);
+    assertRateLimitedHtml(last);
+    assert.equal((await visit(app, `/${seed.slug}`, '10.1.1.2')).statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test('404 também consome o limite: 2 slugs inexistentes e o 3º GET do slug válido dão 429 (critério 20)', async () => {
+  const { app, seed } = await publicApp({ publicPage: { perIp: 2 } });
+  try {
+    assert.equal((await visit(app, '/nao-existe-1')).statusCode, 404);
+    assert.equal((await visit(app, '/nao-existe-2')).statusCode, 404);
+    assertRateLimitedHtml(await visit(app, `/${seed.slug}`));
+  } finally {
+    await app.close();
+  }
+});
+
+test('rotas independentes: /:slug no limite não barra /media; /:slug/ e o 404 de fallback têm contador próprio (critério 19)', async () => {
+  const { app, seed } = await publicApp({ publicPage: { perIp: 2 } });
+  try {
+    for (let i = 0; i < 3; i++) await visit(app, `/${seed.slug}`);
+    assert.equal((await visit(app, `/${seed.slug}`)).statusCode, 429);
+    assert.equal((await visit(app, seed.business.logoUrl)).statusCode, 200);
+    assert.equal((await visit(app, seed.professionals[0].photoUrl)).statusCode, 200);
+
+    // /:slug/ tem contador próprio.
+    const slash = [];
+    for (let i = 0; i < 3; i++) slash.push((await visit(app, `/${seed.slug}/`)).statusCode);
+    assert.deepEqual(slash, [301, 301, 429]);
+
+    // 404 de fallback (slug acima de 100 caracteres não casa /:slug): contador próprio.
+    const long = `/${'a'.repeat(101)}`;
+    const fallback = [];
+    let last;
+    for (let i = 0; i < 3; i++) {
+      last = await visit(app, long);
+      fallback.push(last.statusCode);
+    }
+    assert.deepEqual(fallback, [404, 404, 429]);
+    assertRateLimitedHtml(last);
+    // Em outro IP o fallback continua com o 404 uniforme.
+    assert.ok((await visit(app, long, '10.9.9.9')).rawPayload.equals(NOT_FOUND_HTML));
+  } finally {
+    await app.close();
+  }
+});
+
+test('publicMedia.perIp 1: o 2º logo dá 429 JSON com Retry-After; a foto e a página ainda passam', async () => {
+  const { app, seed } = await publicApp({ publicMedia: { perIp: 1 } });
+  try {
+    assert.equal((await visit(app, seed.business.logoUrl)).statusCode, 200);
+    const second = await visit(app, seed.business.logoUrl);
+    assert.equal(second.statusCode, 429);
+    assert.equal(second.json().error.code, 'RATE_LIMITED');
+    assert.ok(Number(second.headers['retry-after']) >= 1);
+    assert.equal((await visit(app, seed.professionals[0].photoUrl)).statusCode, 200);
+    assert.equal((await visit(app, seed.professionals[0].photoUrl)).statusCode, 429);
+    assert.equal((await visit(app, `/${seed.slug}`)).statusCode, 200);
+    assert.equal((await visit(app, seed.business.logoUrl, '10.1.1.2')).statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test('IPv6: o mesmo /64 divide o contador e outro /64 não (AF-02 item 1)', async () => {
+  const { app, seed } = await publicApp({ publicPage: { perIp: 2 } });
+  try {
+    assert.equal((await visit(app, `/${seed.slug}`, '2001:db8::1')).statusCode, 200);
+    assert.equal((await visit(app, `/${seed.slug}`, '2001:db8::2')).statusCode, 200);
+    assert.equal((await visit(app, `/${seed.slug}`, '2001:db8::ffff:3')).statusCode, 429);
+    assert.equal((await visit(app, `/${seed.slug}`, '2001:db8:0:1::1')).statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test('com cookie, a página não consome limite de usuário nem resolve a sessão', async () => {
+  const { app, seed } = await publicApp({ businessWrite: { perUser: 1, perIp: 100 } });
+  try {
+    for (let i = 0; i < 3; i++) {
+      const res = await visit(app, `/${seed.slug}`, '127.0.0.1', { cookies: seed.cookies });
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.headers['set-cookie'], undefined);
+    }
+    assert.equal((await checkSlug(app, seed.cookies)).statusCode, 200);
+    assert.equal((await checkSlug(app, seed.cookies)).statusCode, 429);
   } finally {
     await app.close();
   }

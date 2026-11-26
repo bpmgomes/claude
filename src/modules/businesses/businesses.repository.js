@@ -121,14 +121,73 @@ export function createBusinessesRepository(db) {
     },
 
     /**
-     * @param {string[]} candidates
-     * @returns {Promise<Set<string>>} os candidatos já usados
+     * Igualdade exata (maiúsculas não casam). Só para a rota pública (AF-09), que já recebe
+     * o slug canônico.
+     * @returns {Promise<Business|undefined>}
      */
-    async findTakenSlugs(candidates, conn = db) {
+    async findBySlug(slug, conn = db) {
+      return fromRow(await conn.get(`SELECT ${COLUMNS} FROM businesses WHERE slug = ?`, [slug]));
+    },
+
+    /**
+     * Candidatos indisponíveis: em uso (businesses.slug) e, com `cutoffIso`, também os em
+     * quarentena vigente de OUTRO negócio (`released_at > cutoffIso` e
+     * `business_id <> exceptBusinessId`). Sem `cutoffIso`, só os em uso.
+     * @param {string[]} candidates
+     * @param {{ cutoffIso?: string, exceptBusinessId?: string|null }} [options]
+     * @returns {Promise<Set<string>>}
+     */
+    async findTakenSlugs(candidates, { cutoffIso, exceptBusinessId = null } = {}, conn = db) {
       if (candidates.length === 0) return new Set();
       const placeholders = candidates.map(() => '?').join(', ');
-      const rows = await conn.all(`SELECT slug FROM businesses WHERE slug IN (${placeholders})`, candidates);
+      let sql = `SELECT slug FROM businesses WHERE slug IN (${placeholders})`;
+      const params = [...candidates];
+      if (cutoffIso) {
+        sql += ` UNION SELECT slug FROM slug_quarantine
+                  WHERE slug IN (${placeholders}) AND released_at > ? AND (? IS NULL OR business_id <> ?)`;
+        params.push(...candidates, cutoffIso, exceptBusinessId, exceptBusinessId);
+      }
+      const rows = await conn.all(sql, params);
       return new Set(rows.map((r) => r.slug));
+    },
+
+    /**
+     * Slug em quarentena vigente de outro negócio (design AF-09, 5.4).
+     * @param {string} slug
+     * @param {{ cutoffIso: string, exceptBusinessId: string|null }} options
+     * @returns {Promise<boolean>}
+     */
+    async isSlugQuarantined(slug, { cutoffIso, exceptBusinessId = null }, conn = db) {
+      const row = await conn.get(
+        `SELECT 1 AS found FROM slug_quarantine
+          WHERE slug = ? AND released_at > ? AND (? IS NULL OR business_id <> ?) LIMIT 1`,
+        [slug, cutoffIso, exceptBusinessId, exceptBusinessId],
+      );
+      return Boolean(row);
+    },
+
+    /** Grava o slug liberado (upsert: um slug só tem uma linha). */
+    async quarantineSlug(slug, businessId, releasedAtIso, conn = db) {
+      await conn.run(
+        `INSERT INTO slug_quarantine (slug, business_id, released_at) VALUES (?, ?, ?)
+         ON CONFLICT (slug) DO UPDATE SET business_id = excluded.business_id, released_at = excluded.released_at`,
+        [slug, businessId, releasedAtIso],
+      );
+    },
+
+    /** O dono volta ao próprio slug antigo: tira a linha da quarentena. */
+    async releaseQuarantine(slug, businessId, conn = db) {
+      return conn.run('DELETE FROM slug_quarantine WHERE slug = ? AND business_id = ?', [slug, businessId]);
+    },
+
+    /** Mantém só os `keep` slugs mais recentes do negócio em quarentena. */
+    async trimQuarantine(businessId, keep, conn = db) {
+      return conn.run(
+        `DELETE FROM slug_quarantine WHERE business_id = ? AND slug NOT IN (
+           SELECT slug FROM slug_quarantine WHERE business_id = ? ORDER BY released_at DESC, slug ASC LIMIT ?
+         )`,
+        [businessId, businessId, keep],
+      );
     },
   };
 }

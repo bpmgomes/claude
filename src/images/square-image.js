@@ -35,15 +35,17 @@ export function detectImageType(buffer) {
 
 /**
  * Valida e reprocessa uma imagem (logo, foto de profissional): PNG size×size, sem metadados
- * (EXIF, XMP, ICC), `fit: 'contain'` com fundo transparente.
+ * (EXIF, XMP, ICC).
+ * - `fit: 'contain'` (padrão, logo): imagem inteira, fundo transparente.
+ * - `fit: 'cover'` (foto de profissional, AF-09): corta ao centro, sem faixas.
  * Nunca deixa escapar erro do sharp: tudo vira InvalidImageError, com `reason`
  * (curto, sem conteúdo da imagem) para o log de rejeição da rota.
  * @param {Buffer} buffer
- * @param {{ size?: number }} [options]
+ * @param {{ size?: number, fit?: 'contain'|'cover' }} [options]
  * @returns {Promise<Buffer>}
  * @throws {InvalidImageError}
  */
-export async function processSquareImage(buffer, { size = IMAGE_SIZE } = {}) {
+export async function processSquareImage(buffer, { size = IMAGE_SIZE, fit = 'contain' } = {}) {
   const reject = (reason, message) => {
     const error = new InvalidImageError(message);
     error.reason = reason;
@@ -51,6 +53,7 @@ export async function processSquareImage(buffer, { size = IMAGE_SIZE } = {}) {
   };
 
   const type = detectImageType(buffer);
+  if (fit !== 'contain' && fit !== 'cover') throw new TypeError(`fit inválido: ${fit}`);
   if (!type) throw reject(buffer && buffer.length ? 'signature' : 'empty');
 
   let meta;
@@ -69,7 +72,13 @@ export async function processSquareImage(buffer, { size = IMAGE_SIZE } = {}) {
   try {
     return await sharp(buffer, SHARP_OPTIONS)
       .rotate()
-      .resize(size, size, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .resize(
+        size,
+        size,
+        fit === 'cover'
+          ? { fit: 'cover', position: 'centre' }
+          : { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } },
+      )
       .png({ compressionLevel: 9 })
       .toBuffer();
   } catch (err) {

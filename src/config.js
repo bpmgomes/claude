@@ -23,6 +23,9 @@
  *   `rateLimit.professionalPhoto` (10/20 por minuto: trocar e remover a foto), também POR ROTA.
  * - `rateLimit.hoursWrite` (30/60 por minuto: gravar a grade de horários do profissional, POR ROTA).
  *   A leitura da grade não tem limite por usuário.
+ * - `rateLimit.publicPage` (`{ perIp: 120 }` por minuto: `/:slug`, `/:slug/` e o 404 de fallback) e
+ *   `rateLimit.publicMedia` (`{ perIp: 600 }` por minuto: `/media/logos/:file` e
+ *   `/media/professionals/:file`): rotas anônimas, só por IP (IPv6 agrupado no /64), POR ROTA.
  * - `imageProcessing` (`{ concurrency: 2, queueMax: 4, queueTimeoutMs: 10000 }`): limite de
  *   processamentos de imagem simultâneos, dividido entre logo e foto (src/images/image-limiter.js);
  *   acima da fila, 503 IMAGE_BUSY.
@@ -65,6 +68,8 @@ export function loadConfig(env = process.env) {
       professionalWrite: { perUser: 30, perIp: 60 },
       professionalPhoto: { perUser: 10, perIp: 20 },
       hoursWrite: { perUser: 30, perIp: 60 },
+      publicPage: { perIp: 120 },
+      publicMedia: { perIp: 600 },
     },
     imageProcessing: {
       concurrency: 2,

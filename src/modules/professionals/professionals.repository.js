@@ -24,6 +24,11 @@ const HAS_ACTIVE_SERVICE = `EXISTS (
   WHERE ps.professional_id = p.id AND ps.business_id = p.business_id AND s.active = 1
 )`;
 
+/** Tem grade de horários (AF-08) no mesmo negócio: parte do contrato público do AF-09 (decisão 4). */
+const HAS_WORKING_HOURS = `EXISTS (
+  SELECT 1 FROM working_hours wh WHERE wh.professional_id = p.id AND wh.business_id = p.business_id
+)`;
+
 function fromRow(row) {
   if (!row) return undefined;
   return {
@@ -304,6 +309,41 @@ export function createProfessionalsRepository(db) {
         conn,
         { activeOnly: true },
       );
+    },
+
+    /**
+     * Contrato público do AF-09: ativo, com >= 1 serviço ativo E com grade (EXISTS working_hours
+     * com o mesmo business_id). Os serviços anexados são só os ativos. Duas consultas, as duas
+     * filtradas por business_id, sem IN (...): a segunda faz JOIN professional_services ->
+     * services -> professionals (removed_at IS NULL) e é filtrada em memória pelos ids listados.
+     * ORDER BY name_key, id; serviços na ordem do AF-06.
+     * @returns {Promise<Professional[]>}
+     */
+    async findListedByBusinessId(businessId, conn = db) {
+      const rows = await conn.all(
+        `SELECT ${P_COLUMNS} FROM professionals p
+          WHERE p.business_id = ? AND p.removed_at IS NULL AND ${HAS_ACTIVE_SERVICE} AND ${HAS_WORKING_HOURS}
+          ${ORDER_BY}`,
+        [businessId],
+      );
+      const professionals = rows.map(fromRow);
+      if (professionals.length === 0) return professionals;
+      const byId = new Map(professionals.map((p) => [p.id, p]));
+      const links = await conn.all(
+        `SELECT ps.professional_id, s.id, s.name, s.active
+           FROM professional_services ps
+           JOIN services s ON s.id = ps.service_id AND s.business_id = ps.business_id
+           JOIN professionals p ON p.id = ps.professional_id AND p.business_id = ps.business_id
+            AND p.removed_at IS NULL
+          WHERE ps.business_id = ? AND s.active = 1
+          ${SERVICES_ORDER_BY}`,
+        [businessId],
+      );
+      for (const row of links) {
+        const professional = byId.get(row.professional_id);
+        if (professional) professional.services.push({ id: row.id, name: row.name, active: row.active === 1 });
+      }
+      return professionals;
     },
 
     /**

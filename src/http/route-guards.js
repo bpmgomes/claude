@@ -1,5 +1,6 @@
 import { requireAuth } from '../modules/auth/auth.plugin.js';
 import { createUserRateLimit } from './user-rate-limit.js';
+import { rateLimitKey } from './ip-key.js';
 
 /**
  * Hooks e config de UMA rota para um bucket de `config.rateLimit` (ex.: 'businessWrite').
@@ -37,4 +38,30 @@ export function createRouteGuards(config, bucket) {
 /** Só autenticação, sem limite (leituras). Array novo a cada chamada. */
 export function authOnly() {
   return { onRequest: [requireAuth] };
+}
+
+/** keyGenerator das rotas públicas: IP com IPv6 agrupado no /64. */
+export const publicKeyGenerator = (request) => rateLimitKey(request.ip);
+
+/**
+ * Guards de UMA rota pública (design AF-09, 4.3): sem requireAuth, sem limite por usuário,
+ * limite por IP com chave `rateLimitKey` e `publicRoute: true` (o auth.plugin não lê a sessão).
+ * Objetos novos a cada chamada, pelo mesmo motivo de createRouteGuards: nunca reaproveite o
+ * retorno entre rotas.
+ * @param {object} config app.config
+ * @param {string} bucket chave em config.rateLimit com { perIp }
+ * @returns {{ onRequest: Function[], config: { publicRoute: true, rateLimit?: { max: number, timeWindow: string|number, keyGenerator: Function } } }}
+ */
+export function createPublicRouteGuards(config, bucket) {
+  const rl = config.rateLimit;
+  if (!rl.enabled) return { onRequest: [], config: { publicRoute: true } };
+  const limits = rl[bucket];
+  if (!limits) throw new Error(`Bucket de rate limit desconhecido: ${bucket}`);
+  return {
+    onRequest: [],
+    config: {
+      publicRoute: true,
+      rateLimit: { max: limits.perIp, timeWindow: rl.timeWindow, keyGenerator: publicKeyGenerator },
+    },
+  };
 }

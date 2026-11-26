@@ -112,7 +112,7 @@ Critérios de aceite
 ## E3 — Agendamento (cliente)
 
 ### AF-09 · Página pública do negócio
-Tipo: História · Prioridade: Alta · Pontos: 3 · Status: TODO
+Tipo: História · Prioridade: Alta · Pontos: 3 · Status: DONE
 
 Como cliente final, quero ver os serviços, preços e profissionais pelo link público.
 

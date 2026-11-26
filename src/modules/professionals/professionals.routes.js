@@ -1,4 +1,4 @@
-import { createRouteGuards, authOnly } from '../../http/route-guards.js';
+import { createRouteGuards, createPublicRouteGuards, authOnly } from '../../http/route-guards.js';
 import { NotFoundError } from '../../http/errors.js';
 import { LOGO_MAX_BYTES } from '../../shared/validation.js';
 import { PROFESSIONAL_MESSAGES } from '../../shared/professionals.js';
@@ -99,7 +99,8 @@ export default async function professionalsRoutes(app) {
 
   // Público (usado pelo AF-09). Só entrega arquivo referenciado no banco por profissional ativo.
   // `X-Content-Type-Options: nosniff` vem do helmet (global).
-  app.get('/media/professionals/:file', async (request, reply) => {
+  // Guards públicos próprios (AF-09, critério 19): limite por IP, sem ler a sessão.
+  app.get('/media/professionals/:file', createPublicRouteGuards(config, 'publicMedia'), async (request, reply) => {
     const { file } = request.params;
     if (typeof file !== 'string' || !PHOTO_FILE_RE.test(file)) throw new NotFoundError();
     const key = `professionals/${file}`;

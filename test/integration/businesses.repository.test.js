@@ -127,3 +127,64 @@ test('toOwnerBusiness não expõe ownerId nem logoKey', async () => {
   assert.equal(out.publicUrl, 'https://agendafacil.app/salao');
   assert.equal(out.logoUrl, null);
 });
+
+// ---------------------------------------------------------------------------
+// AF-09: página pública e quarentena do slug (critério 24).
+// ---------------------------------------------------------------------------
+
+test('findBySlug é exato: maiúsculas não casam', async () => {
+  const b = await repo.insert(business(ownerA, 'salao-da-ana'));
+  assert.equal((await repo.findBySlug('salao-da-ana')).id, b.id);
+  assert.equal(await repo.findBySlug('Salao-Da-Ana'), undefined);
+  assert.equal(await repo.findBySlug('salao'), undefined);
+});
+
+test('findTakenSlugs sem opções ignora a quarentena; com cutoffIso inclui a vigente de outro negócio', async () => {
+  const a = await repo.insert(business(ownerA, 'salao'));
+  const b = await repo.insert(business(ownerB, 'outro'));
+  await repo.quarantineSlug('vigente', a.id, '2026-03-10T00:00:00.000Z');
+  await repo.quarantineSlug('expirada', a.id, '2026-01-01T00:00:00.000Z');
+  const candidates = ['salao', 'vigente', 'expirada', 'livre'];
+
+  assert.deepEqual(await repo.findTakenSlugs(candidates), new Set(['salao']));
+  const cutoffIso = '2026-02-01T00:00:00.000Z';
+  assert.deepEqual(await repo.findTakenSlugs(candidates, { cutoffIso }), new Set(['salao', 'vigente']));
+  assert.deepEqual(
+    await repo.findTakenSlugs(candidates, { cutoffIso, exceptBusinessId: b.id }),
+    new Set(['salao', 'vigente']),
+  );
+  // A quarentena do próprio negócio não conta.
+  assert.deepEqual(await repo.findTakenSlugs(candidates, { cutoffIso, exceptBusinessId: a.id }), new Set(['salao']));
+
+  assert.equal(await repo.isSlugQuarantined('vigente', { cutoffIso, exceptBusinessId: b.id }), true);
+  assert.equal(await repo.isSlugQuarantined('vigente', { cutoffIso, exceptBusinessId: a.id }), false);
+  assert.equal(await repo.isSlugQuarantined('expirada', { cutoffIso, exceptBusinessId: b.id }), false);
+  assert.equal(await repo.isSlugQuarantined('livre', { cutoffIso, exceptBusinessId: null }), false);
+});
+
+test('quarantineSlug faz upsert; releaseQuarantine só apaga o do próprio negócio', async () => {
+  const a = await repo.insert(business(ownerA, 'salao'));
+  const b = await repo.insert(business(ownerB, 'outro'));
+  await repo.quarantineSlug('x', a.id, '2026-01-01T00:00:00.000Z');
+  await repo.quarantineSlug('x', b.id, '2026-03-01T00:00:00.000Z');
+  assert.deepEqual(await db.all('SELECT slug, business_id, released_at FROM slug_quarantine'), [
+    { slug: 'x', business_id: b.id, released_at: '2026-03-01T00:00:00.000Z' },
+  ]);
+  assert.equal((await repo.releaseQuarantine('x', a.id)).changes, 0);
+  assert.equal((await repo.releaseQuarantine('x', b.id)).changes, 1);
+  assert.deepEqual(await db.all('SELECT slug FROM slug_quarantine'), []);
+});
+
+test('trimQuarantine mantém os 3 mais recentes do negócio e não toca os de outro', async () => {
+  const a = await repo.insert(business(ownerA, 'salao'));
+  const b = await repo.insert(business(ownerB, 'outro'));
+  for (const [i, slug] of ['a1', 'a2', 'a3', 'a4', 'a5'].entries()) {
+    await repo.quarantineSlug(slug, a.id, `2026-03-0${i + 1}T00:00:00.000Z`);
+  }
+  await repo.quarantineSlug('b1', b.id, '2026-01-01T00:00:00.000Z');
+  await repo.trimQuarantine(a.id, 3);
+  assert.deepEqual(
+    (await db.all('SELECT slug FROM slug_quarantine ORDER BY slug')).map((r) => r.slug),
+    ['a3', 'a4', 'a5', 'b1'],
+  );
+});

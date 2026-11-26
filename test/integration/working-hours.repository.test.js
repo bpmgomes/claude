@@ -6,7 +6,10 @@ import { runMigrations } from '../../src/db/migrate.js';
 import { createUsersRepository } from '../../src/modules/accounts/users.repository.js';
 import { createBusinessesRepository } from '../../src/modules/businesses/businesses.repository.js';
 import { createProfessionalsRepository } from '../../src/modules/professionals/professionals.repository.js';
-import { createWorkingHoursRepository } from '../../src/modules/working-hours/working-hours.repository.js';
+import {
+  createWorkingHoursRepository,
+  FIND_WEEKLY_IDS_MAX,
+} from '../../src/modules/working-hours/working-hours.repository.js';
 import { textKey } from '../../src/shared/validation.js';
 
 const NOW = '2026-03-01T12:00:00.000Z';
@@ -200,4 +203,49 @@ test('lockActive: changes 1 para ativo, 0 para removido e para outro negócio', 
   await db.transaction((tx) => professionals.markRemoved(p, businessA, NOW, tx));
   assert.equal((await professionals.lockActive(p, businessA)).changes, 0);
   assert.equal((await professionals.claimForBooking(p, businessA)).changes, 0);
+});
+
+// ---------------------------------------------------------------------------
+// AF-09 (AF-08 item 2): findWeeklyByBusiness sem IN (...) e teto em findWeekly.
+// ---------------------------------------------------------------------------
+
+test('findWeeklyByBusiness: todos os ativos do negócio numa consulta sem IN, sem removidos e sem outro negócio', async () => {
+  const ana = await makeProfessional(businessA, 'Ana');
+  const bia = await makeProfessional(businessA, 'Bia');
+  const removed = await makeProfessional(businessA, 'Carla');
+  const other = await makeProfessional(businessB, 'Duda');
+  await makeProfessional(businessA, 'Sem grade');
+  await insertRaw(ana, businessA, 3, 600, 660);
+  await insertRaw(ana, businessA, 1, 540, 600);
+  await insertRaw(bia, businessA, 2, 540, 600);
+  await insertRaw(removed, businessA, 2, 540, 600);
+  await insertRaw(other, businessB, 2, 540, 600);
+  await db.transaction((tx) => professionals.markRemoved(removed, businessA, NOW, tx));
+
+  const calls = [];
+  const counting = {
+    all: (sql, params) => {
+      calls.push(sql);
+      return db.all(sql, params);
+    },
+  };
+  const weekly = await createWorkingHoursRepository(counting).findWeeklyByBusiness(businessA);
+  assert.equal(calls.length, 1);
+  assert.doesNotMatch(calls[0], /\bIN\s*\(/i);
+  assert.deepEqual([...weekly.keys()].sort(), [ana, bia].sort());
+  assert.deepEqual(weekly.get(ana), [
+    { weekday: 1, startMinute: 540, endMinute: 600 },
+    { weekday: 3, startMinute: 600, endMinute: 660 },
+  ]);
+  assert.deepEqual(weekly.get(bia), [{ weekday: 2, startMinute: 540, endMinute: 600 }]);
+  assert.equal((await hours.findWeeklyByBusiness(businessB)).has(other), true);
+});
+
+test(`findWeekly: ${FIND_WEEKLY_IDS_MAX} ids funcionam, ${FIND_WEEKLY_IDS_MAX + 1} lançam RangeError`, async () => {
+  assert.equal(FIND_WEEKLY_IDS_MAX, 50);
+  const ids = Array.from({ length: FIND_WEEKLY_IDS_MAX }, () => randomUUID());
+  assert.equal((await hours.findWeekly(businessA, ids)).size, 0);
+  // Repetidos contam uma vez.
+  assert.equal((await hours.findWeekly(businessA, [...ids, ids[0]])).size, 0);
+  await assert.rejects(hours.findWeekly(businessA, [...ids, randomUUID()]), RangeError);
 });

@@ -14,6 +14,12 @@ import { unlimitedImageLimiter } from '../../images/image-limiter.js';
 
 export const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
 export const NEXT_STEP_PATH = '/servicos';
+/** Quarentena do slug antigo após troca (AF-09, decisão 6; AF-05 item 5). */
+export const SLUG_QUARANTINE_DAYS = 30;
+/** Teto de slugs em quarentena por negócio: impede o "estoque" de slugs (design AF-09, 5.4). */
+export const SLUG_QUARANTINE_PER_BUSINESS_MAX = 3;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const BUSINESS_NOT_FOUND_MESSAGE = 'Você ainda não cadastrou seu negócio.';
 const BUSINESS_EXISTS_MESSAGE = 'Você já cadastrou seu negócio.';
@@ -51,29 +57,50 @@ export function createBusinessesService({
     return business;
   }
 
-  /** Primeira alternativa livre para `base`, verificada no banco agora; null se nenhuma. */
-  async function suggestSlug(base) {
+  /** Início da quarentena vigente: liberações depois deste instante ainda valem. */
+  function quarantineCutoffIso() {
+    return new Date(now().getTime() - SLUG_QUARANTINE_DAYS * DAY_MS).toISOString();
+  }
+
+  /** Em uso ou em quarentena de outro negócio. */
+  function findTaken(candidates, exceptBusinessId = null) {
+    return businessesRepository.findTakenSlugs(candidates, { cutoffIso: quarantineCutoffIso(), exceptBusinessId });
+  }
+
+  /**
+   * Primeira alternativa livre para `base`, verificada no banco agora; null se nenhuma.
+   * Nunca sugere slug em uso nem em quarentena de outro negócio.
+   */
+  async function suggestSlug(base, { exceptBusinessId = null } = {}) {
     const candidates = [];
     for (let n = SUGGESTION_RANGE.from; n <= SUGGESTION_RANGE.to; n++) {
       const candidate = withSuffix(base, n);
       if (!RESERVED_SLUGS.has(candidate) && validateSlug(candidate).ok) candidates.push(candidate);
     }
-    const taken = await businessesRepository.findTakenSlugs(candidates);
+    const taken = await findTaken(candidates, exceptBusinessId);
     const free = candidates.find((c) => !taken.has(c));
     if (free) return free;
 
     for (let attempt = 0; attempt < RANDOM_ATTEMPTS; attempt++) {
       const candidate = withSuffix(base, randomInt(1000, 10000));
       if (!validateSlug(candidate).ok) continue;
-      const busy = await businessesRepository.findTakenSlugs([candidate]);
+      const busy = await findTaken([candidate], exceptBusinessId);
       if (!busy.has(candidate)) return candidate;
     }
     return null;
   }
 
-  async function translateSlugConflict(err, slug) {
-    if (err instanceof UniqueViolationError && err.constraint === 'businesses_slug_unique') {
-      return new SlugTakenError(await suggestSlug(slug));
+  /**
+   * Slug em uso (constraint) ou em quarentena (SlugTakenError sem sugestão, lançado dentro da
+   * transação): a sugestão é calculada aqui, FORA da transação (no SQLite a chamada ao `db`
+   * global dentro dela travaria a fila, R2 do AF-07). O corpo é o mesmo nos dois casos.
+   */
+  async function translateSlugConflict(err, slug, exceptBusinessId = null) {
+    if (
+      (err instanceof UniqueViolationError && err.constraint === 'businesses_slug_unique') ||
+      (err instanceof SlugTakenError && err.suggestion === null)
+    ) {
+      return new SlugTakenError(await suggestSlug(slug, { exceptBusinessId }));
     }
     return err;
   }
@@ -101,16 +128,28 @@ export function createBusinessesService({
       if (Object.keys(fields).length > 0) throw new ValidationError(fields);
 
       const createdAt = now().toISOString();
+      const id = randomUUID();
+      const cutoffIso = quarantineCutoffIso();
       try {
-        return await businessesRepository.insert({
-          id: randomUUID(),
-          ownerId,
-          name: value.name,
-          slug,
-          address: value.address,
-          phone: value.phone,
-          timezone: DEFAULT_TIMEZONE,
-          createdAt,
+        // Insert e checagem de quarentena na mesma transação (design AF-09, 5.4).
+        return await db.transaction(async (tx) => {
+          const business = await businessesRepository.insert(
+            {
+              id,
+              ownerId,
+              name: value.name,
+              slug,
+              address: value.address,
+              phone: value.phone,
+              timezone: DEFAULT_TIMEZONE,
+              createdAt,
+            },
+            tx,
+          );
+          if (await businessesRepository.isSlugQuarantined(slug, { cutoffIso, exceptBusinessId: id }, tx)) {
+            throw new SlugTakenError(null);
+          }
+          return business;
         });
       } catch (err) {
         if (err instanceof UniqueViolationError && err.constraint === 'businesses_owner_id_unique') {
@@ -137,33 +176,58 @@ export function createBusinessesService({
       const result = validateBusinessInput(input, { partial: true });
       if (!result.ok) throw new ValidationError(result.fields);
 
+      const nowIso = now().toISOString();
+      const patch = { ...result.value, updatedAt: nowIso };
+      const newSlug = result.value.slug;
       try {
-        await businessesRepository.update(business.id, ownerId, {
-          ...result.value,
-          updatedAt: now().toISOString(),
-        });
+        if (newSlug === undefined || newSlug === business.slug) {
+          // Sem troca de slug: sem transação e sem tocar a quarentena.
+          await businessesRepository.update(business.id, ownerId, patch);
+        } else {
+          const cutoffIso = quarantineCutoffIso();
+          await db.transaction(async (tx) => {
+            const current = await businessesRepository.findByOwnerId(ownerId, tx);
+            await businessesRepository.update(business.id, ownerId, patch, tx);
+            const quarantined = await businessesRepository.isSlugQuarantined(
+              newSlug,
+              { cutoffIso, exceptBusinessId: business.id },
+              tx,
+            );
+            if (quarantined) throw new SlugTakenError(null);
+            await businessesRepository.releaseQuarantine(newSlug, business.id, tx);
+            const oldSlug = current ? current.slug : business.slug;
+            if (oldSlug !== newSlug) {
+              await businessesRepository.quarantineSlug(oldSlug, business.id, nowIso, tx);
+              await businessesRepository.trimQuarantine(business.id, SLUG_QUARANTINE_PER_BUSINESS_MAX, tx);
+            }
+          });
+        }
       } catch (err) {
-        throw await translateSlugConflict(err, result.value.slug);
+        throw await translateSlugConflict(err, newSlug, business.id);
       }
       return getForOwner(ownerId);
     },
 
     /**
-     * Checagem de disponibilidade enquanto o dono digita. O slug atual do próprio dono conta como livre.
-     * @returns {Promise<{ slug: string, available: boolean, reason?: string, message?: string, suggestion?: string }>}
+     * Checagem de disponibilidade enquanto o dono digita. O slug atual do próprio dono e os
+     * slugs dele em quarentena contam como livres; a quarentena de outro negócio dá TAKEN.
+     * `INVALID` não ecoa a entrada (sem `slug`, AF-05 item 6).
+     * @returns {Promise<{ slug?: string, available: boolean, reason?: string, message?: string, suggestion?: string }>}
      */
     async checkSlug(ownerId, raw) {
       const check = validateSlug(raw);
       if (!check.ok) {
+        if (check.reason === 'INVALID') return { available: false, reason: check.reason, message: check.message };
         return { slug: normalizeSlug(raw), available: false, reason: check.reason, message: check.message };
       }
       const slug = check.value;
       const own = await businessesRepository.findByOwnerId(ownerId);
       if (own && own.slug === slug) return { slug, available: true };
-      const taken = await businessesRepository.findTakenSlugs([slug]);
+      const exceptBusinessId = own ? own.id : null;
+      const taken = await findTaken([slug], exceptBusinessId);
       if (!taken.has(slug)) return { slug, available: true };
       const response = { slug, available: false, reason: 'TAKEN', message: SLUG_TAKEN_MESSAGE };
-      const suggestion = await suggestSlug(slug);
+      const suggestion = await suggestSlug(slug, { exceptBusinessId });
       if (suggestion) response.suggestion = suggestion;
       return response;
     },

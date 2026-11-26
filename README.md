@@ -8,9 +8,18 @@ Backend Fastify + SQLite (`node:sqlite`) e frontend estático em `web/`.
 npm install
 npm run dev      # ou: npm start
 npm test
+npm run perf     # desempenho da página pública (Playwright + Chromium)
+npm run test:e2e # responsividade, acessibilidade e XSS da página pública (Playwright + Chromium)
 ```
 
 Requer Node.js 22.13 ou superior.
+
+`npm run perf` e `npm run test:e2e` usam o Playwright e o Chromium **do ambiente**: eles não
+estão no `package.json`. Sem eles, os dois scripts falham com a instrução de instalação
+(`npx playwright install chromium`, com o pacote `playwright` instalado globalmente ou no
+`NODE_PATH`). O `npm test` não depende deles. O `perf` mede 5 cargas com cache frio no perfil
+"4G lento" (150 ms, 1,6 Mbps, 750 Kbps, CPU 4x) e falha se o p75 de `loadEventEnd` passar de 2 s
+ou o p75 de bytes passar de 500 KB; `PERF_REPORT=<arquivo>` grava o relatório em JSON.
 
 O processamento do logo usa o `sharp`, que traz o binário da libvips como dependência
 opcional por plataforma (`@img/sharp-linux-x64`, `@img/sharp-linuxmusl-x64`, ...):
@@ -36,7 +45,7 @@ Toda a configuração vem de variáveis de ambiente, lidas por `loadConfig` em `
 | `COOKIE_SECURE` | `true` | Envia o cookie de sessão com `Secure`. `false` só é aceito com `NODE_ENV=development` ou `NODE_ENV=test` (valor exato); com qualquer outro valor, inclusive sem `NODE_ENV`, `COOKIE_SECURE=false` impede a aplicação de iniciar. |
 | `TRUST_PROXY` | `false` | Define de onde vem o IP do cliente (usado no bloqueio de login e no rate limit). Ver abaixo. |
 | `ALLOWED_ORIGINS` | vazio | Origens extras aceitas pela proteção CSRF, separadas por vírgula (ex.: `https://admin.exemplo.com`). Por padrão só a própria origem é aceita. |
-| `RATE_LIMIT_ENABLED` | `true` | Liga o rate limit por IP (cadastro: 10/min; login: 20/min) e, nas rotas do negócio e dos serviços, também por usuário. Os limites valem **por rota**, cada rota com contadores próprios por IP e por usuário: escrita do negócio e checagem de slug (`rateLimit.businessWrite`): 30/min por usuário e 60/min por IP; logo (`rateLimit.logoUpload`): 10/min por usuário e 20/min por IP; criar, editar, desativar e reativar serviço (`rateLimit.serviceWrite`): 30/min por usuário e 60/min por IP; criar, editar e remover profissional (`rateLimit.professionalWrite`): 30/min por usuário e 60/min por IP; trocar e remover a foto do profissional (`rateLimit.professionalPhoto`): 10/min por usuário e 20/min por IP; gravar a grade de horários do profissional (`rateLimit.hoursWrite`): 30/min por usuário e 60/min por IP. Leituras (`GET`) não têm limite por usuário. |
+| `RATE_LIMIT_ENABLED` | `true` | Liga o rate limit por IP (cadastro: 10/min; login: 20/min) e, nas rotas do negócio e dos serviços, também por usuário. Os limites valem **por rota**, cada rota com contadores próprios por IP e por usuário: escrita do negócio e checagem de slug (`rateLimit.businessWrite`): 30/min por usuário e 60/min por IP; logo (`rateLimit.logoUpload`): 10/min por usuário e 20/min por IP; criar, editar, desativar e reativar serviço (`rateLimit.serviceWrite`): 30/min por usuário e 60/min por IP; criar, editar e remover profissional (`rateLimit.professionalWrite`): 30/min por usuário e 60/min por IP; trocar e remover a foto do profissional (`rateLimit.professionalPhoto`): 10/min por usuário e 20/min por IP; gravar a grade de horários do profissional (`rateLimit.hoursWrite`): 30/min por usuário e 60/min por IP. Leituras (`GET`) não têm limite por usuário. Rotas públicas, só por IP (IPv6 agrupado no /64), sem ler a sessão: página do negócio (`rateLimit.publicPage`): 120/min, com contadores separados para `/:slug`, `/:slug/` e o 404 de fallback (o 404 também conta); `/media/logos/:file` e `/media/professionals/:file` (`rateLimit.publicMedia`): 600/min, uma rota por contador. |
 | `UPLOADS_DIR` | `./data/uploads` | Diretório dos logos (`logos/<uuid>.png`) e das fotos de profissionais (`professionals/<uuid>.png`). Deve ficar num volume persistente e entrar no backup junto com o banco. |
 | `PUBLIC_BASE_URL` | `http://localhost:<PORT>` | Base do link público do negócio (ex.: `https://agendafacil.app`), sem barra final. **Defina em produção**; o link nunca é montado a partir do header `Host`. |
 | `LOG_LEVEL` | `info` | Nível de log. |
@@ -67,6 +76,14 @@ UPLOADS_DIR=/var/lib/agendafacil/uploads   # volume persistente, com backup
 ### Desenvolvimento local
 
 Chrome e Firefox aceitam cookie `Secure` em `http://localhost`. Em outro navegador ou host acessado por HTTP, rode com `NODE_ENV=development COOKIE_SECURE=false` (sem `NODE_ENV=development`, a aplicação não inicia).
+
+## Página pública do negócio
+
+- `GET /<slug>` (ex.: `https://agendafacil.app/salao-da-ana`) é renderizada no servidor, sem JavaScript e sem sessão: mostra nome, endereço, telefone, logo, os serviços ativos com ao menos um profissional apto e os profissionais ativos com serviço ativo **e** grade de horários. O botão "Agendar" fica desabilitado até o AF-10.
+- Cache: `Cache-Control: public, max-age=60` e `ETag` fraco (304 com `If-None-Match`). Uma mudança do dono aparece em até 60 s.
+- Slug com maiúsculas ou barra final: `301` para `/<slug em minúsculas>`. Inexistente, inválido, reservado ou em quarentena: o mesmo `404` HTML (bytes constantes).
+- CSP própria: `default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`.
+- Troca de slug: o slug antigo deixa de funcionar na hora (404, sem redirecionamento) e fica em **quarentena por 30 dias**, reservado ao próprio negócio (tabela `slug_quarantine`). Outro dono que tentar usá-lo recebe o mesmo `409 SLUG_TAKEN` de um slug em uso. Cada negócio mantém no máximo os 3 slugs liberados mais recentes; a 4ª troca libera o mais antigo.
 
 ## Login e bloqueio
 

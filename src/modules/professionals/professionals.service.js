@@ -27,6 +27,9 @@ export const NAME_DUPLICATE_WARNING = Object.freeze({
   message: PROFESSIONAL_MESSAGES.nameDuplicate,
 });
 
+/** Foto de profissional: PNG 256×256 com `fit: 'cover'` (AF-09; fecha a ressalva do QA do AF-07). */
+export const processProfessionalPhoto = (buffer) => processSquareImage(buffer, { fit: 'cover' });
+
 const noopLog = { info() {}, warn() {}, error() {} };
 
 /**
@@ -48,7 +51,7 @@ export function createProfessionalsService({
   businessesRepository,
   storage,
   appointments = noAppointments,
-  processImage = processSquareImage,
+  processImage = processProfessionalPhoto,
   imageLimiter = unlimitedImageLimiter,
   now = () => new Date(),
   log = noopLog,

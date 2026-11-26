@@ -87,3 +87,24 @@ export function withSuffix(base, n) {
   const head = trimHyphens(String(base).slice(0, SLUG_MAX - suffix.length));
   return `${head}${suffix}`;
 }
+
+/**
+ * Slug vindo da URL pública (AF-09). Não faz trim nem conserto, e não roda regex sobre texto longo.
+ * - não string, ou length > SLUG_MAX            -> { kind: 'invalid' } (antes de qualquer transformação)
+ * - lower = raw.toLowerCase(); lower.length !== raw.length -> invalid (ex.: 'İ')
+ * - lower fora de SLUG_RE, < SLUG_MIN ou reservado -> invalid
+ * - lower !== raw                                 -> { kind: 'redirect', slug: lower }
+ * - senão                                         -> { kind: 'ok', slug: raw }
+ * Os casos invalid nunca carregam o valor recebido.
+ * @param {unknown} raw
+ * @returns {{ kind: 'ok'|'redirect', slug: string } | { kind: 'invalid' }}
+ */
+export function parsePublicSlug(raw) {
+  const invalid = { kind: 'invalid' };
+  if (typeof raw !== 'string' || raw.length > SLUG_MAX) return invalid;
+  const lower = raw.toLowerCase();
+  if (lower.length !== raw.length) return invalid;
+  if (lower.length < SLUG_MIN || !SLUG_RE.test(lower) || RESERVED_SLUGS.has(lower)) return invalid;
+  if (lower !== raw) return { kind: 'redirect', slug: lower };
+  return { kind: 'ok', slug: raw };
+}
