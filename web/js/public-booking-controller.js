@@ -1,6 +1,8 @@
-// Lógica da seção de horários da página pública (AF-10, 4.4). Sem DOM e sem relógio do navegador:
-// a data de hoje e o fuso vêm do servidor (atributos data-* e campos `now`/`timezone` da resposta).
+// Lógica da seção de horários da página pública (AF-10, 4.4) e da confirmação (AF-11, 4.4). Sem DOM
+// e sem relógio do navegador: a data de hoje e o fuso vêm do servidor (atributos data-* e campos
+// `now`/`timezone` da resposta). Datas só por manipulação de string.
 import { requestJson } from './api.js';
+import { serverFieldErrors } from './customer-form-controller.js';
 import { ANY_PROFESSIONAL, AVAILABILITY_MESSAGES } from '/shared/availability.js';
 import { SERVICE_ID_RE } from '/shared/services.js';
 import { parseLocalDate } from '/shared/zoned-time.js';
@@ -15,6 +17,20 @@ export const BOOKING_MESSAGES = Object.freeze({
   rateLimited: 'Muitas consultas em pouco tempo. Aguarde um instante e tente de novo.',
   unavailable: 'Não foi possível carregar os horários. Tente de novo em instantes.',
   chooseService: 'Escolha um serviço para ver os horários.',
+  // AF-11: confirmação.
+  confirming: 'Confirmando seu agendamento…',
+  confirmingButton: 'Confirmando…',
+  confirmButton: 'Confirmar agendamento',
+  slotTaken: 'Este horário acabou de ser ocupado. Escolha outro.',
+  noSuggestions: 'Não encontramos outros horários livres próximos. Escolha outra data.',
+  limit: 'Já existem agendamentos marcados com estes dados. Para marcar outro, ligue para o estabelecimento.',
+  bookingNotFound: 'Este serviço ou profissional não está mais disponível. Recarregue a página.',
+  bookingRateLimited: 'Muitas tentativas em pouco tempo. Aguarde um instante e tente de novo.',
+  bookingUnavailable: 'Não foi possível confirmar agora. Seus dados continuam aqui. Tente de novo em instantes.',
+  reused: 'Esta tentativa já foi usada com outros dados. Recarregue a página e tente de novo.',
+  fieldsElsewhere: 'Escolha o horário de novo.',
+  checkFields: 'Verifique os campos destacados.',
+  slotGone: 'Este horário não está mais livre. Escolha outro.',
 });
 
 const WEEKDAY_SHORT = Object.freeze({ 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sáb', 7: 'dom' });
@@ -60,7 +76,7 @@ function fieldMessage(error) {
  * @param {{ serviceId: string, professionalId: string, date: string }} selection
  * @param {{ fetchFn?: typeof fetch, signal?: AbortSignal }} [options]
  * @returns {Promise<
- *   { ok: true, day: { date: string, weekday: number, slots: Array<{ label: string, start: string, end: string, endLabel: string, professionalIds: string[] }> },
+ *   { ok: true, day: { date: string, weekday: number, slots: Array<{ label: string, start: string, end: string, endLabel: string }> },
  *     timezone: string, now: string, anyEligible: boolean }
  *   | { ok: false, status: number, message: string, aborted?: boolean }>}
  */
@@ -81,6 +97,7 @@ export async function loadAvailability(slug, selection, { fetchFn, signal } = {}
   if (!day || !Array.isArray(body.professionals) || !Array.isArray(day.slots)) {
     return failure(res.status, BOOKING_MESSAGES.unavailable);
   }
+  // Sem ids por horário em "qualquer" (AF-11, decisão 4).
   const ids = body.professionals;
   return {
     ok: true,
@@ -92,9 +109,6 @@ export async function loadAvailability(slug, selection, { fetchFn, signal } = {}
         endLabel: timeOf(slot.end, { end: true, date: day.date }),
         start: slot.start,
         end: slot.end,
-        professionalIds: (Array.isArray(slot.professionals) ? slot.professionals : [])
-          .map((i) => ids[i])
-          .filter((id) => typeof id === 'string'),
       })),
     },
     timezone: String(body.timezone ?? ''),
@@ -199,4 +213,171 @@ export function emptyDayMessage({ any, anyEligible }) {
 export function readyMessage(count, date, weekday) {
   const label = dayLabel(date, weekday);
   return count === 1 ? `1 horário livre em ${label}.` : `${count} horários livres em ${label}.`;
+}
+
+// Confirmação do agendamento (AF-11, 4.4).
+
+const DATE_TIME_LENGTH = 16;
+const isLocalDateTime = (v) => typeof v === 'string' && v.length === DATE_TIME_LENGTH && parseLocalDate(v.slice(0, 10)).ok && v[10] === 'T';
+const text = (v) => (typeof v === 'string' ? v : '');
+const SUGGESTIONS_MAX = 3;
+
+/** Dia ISO (1 = seg .. 7 = dom) de 'YYYY-MM-DD', por aritmética (Sakamoto). */
+export function isoWeekdayOfDate(date) {
+  const parsed = parseLocalDate(date);
+  if (!parsed.ok) return 0;
+  const offsets = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+  let { year } = parsed.value;
+  const { month, day } = parsed.value;
+  if (month < 3) year -= 1;
+  const dow = (year + Math.floor(year / 4) - Math.floor(year / 100) + Math.floor(year / 400) + offsets[month - 1] + day) % 7;
+  return dow === 0 ? 7 : dow;
+}
+
+/** '/api/public/<slug>/appointments'. */
+export function appointmentsUrl(slug) {
+  return `/api/public/${encodeURIComponent(String(slug ?? ''))}/appointments`;
+}
+
+/** Mensagem do servidor só com o código esperado; senão, a fixa local. */
+function serverMessage(error, code, fallback) {
+  return error && error.code === code && typeof error.message === 'string' && error.message ? error.message : fallback;
+}
+
+/** Sugestões do 409: só `{ start, end }` válidos, até 3, com rótulos. */
+function toSuggestions(list, requestedStart) {
+  const requestedDate = text(requestedStart).slice(0, 10);
+  const out = [];
+  for (const item of Array.isArray(list) ? list : []) {
+    if (out.length >= SUGGESTIONS_MAX) break;
+    if (!item || !isLocalDateTime(item.start) || !isLocalDateTime(item.end)) continue;
+    const date = item.start.slice(0, 10);
+    const suggestion = { start: item.start, end: item.end, label: timeOf(item.start) };
+    if (date !== requestedDate) suggestion.dateLabel = dayLabel(date, isoWeekdayOfDate(date));
+    out.push(suggestion);
+  }
+  return out;
+}
+
+/**
+ * POST de confirmação, sempre com credentials: 'omit' (critério 30) e, com `idempotencyKey`, o
+ * cabeçalho Idempotency-Key (critério 25). Resultado: `{ ok: true, appointment }` ou `{ ok: false,
+ * kind, message }` com kind 'fields' (+ fields, otherFields), 'slot' (+ suggestions), 'limit',
+ * 'notFound', 'rateLimited', 'reused', 'unavailable' ou 'network'.
+ */
+export async function confirmBooking(slug, { serviceId, professionalId, start, customer }, { fetchFn, idempotencyKey } = {}) {
+  const options = {
+    method: 'POST',
+    credentials: 'omit',
+    body: {
+      serviceId,
+      professionalId,
+      start,
+      customer: { name: text(customer?.name), phone: text(customer?.phone), email: text(customer?.email) },
+    },
+  };
+  if (typeof idempotencyKey === 'string' && idempotencyKey) options.headers = { 'Idempotency-Key': idempotencyKey };
+  if (fetchFn) options.fetchFn = fetchFn;
+  const res = await requestJson(appointmentsUrl(slug), options);
+  if (res.ok) {
+    const appointment = res.body && res.body.appointment;
+    if (res.status === 201 && appointment && typeof appointment === 'object') return { ok: true, appointment };
+    return { ok: false, kind: 'unavailable', message: BOOKING_MESSAGES.bookingUnavailable };
+  }
+  const error = res.error || {};
+  switch (res.status) {
+    case 0:
+      return { ok: false, kind: 'network', message: BOOKING_MESSAGES.bookingUnavailable };
+    case 400: {
+      const fields = serverFieldErrors(error);
+      const raw = error.fields && typeof error.fields === 'object' ? error.fields : {};
+      const otherFields = ['serviceId', 'professionalId', 'start'].some((k) => Object.prototype.hasOwnProperty.call(raw, k));
+      if (Object.keys(fields).length === 0 && !otherFields) {
+        return { ok: false, kind: 'unavailable', message: BOOKING_MESSAGES.bookingUnavailable };
+      }
+      return {
+        ok: false,
+        kind: 'fields',
+        fields,
+        otherFields,
+        message: otherFields ? BOOKING_MESSAGES.fieldsElsewhere : BOOKING_MESSAGES.checkFields,
+      };
+    }
+    case 404:
+      return { ok: false, kind: 'notFound', message: BOOKING_MESSAGES.bookingNotFound };
+    case 409:
+      if (error.code === 'SLOT_UNAVAILABLE') {
+        return {
+          ok: false,
+          kind: 'slot',
+          message: serverMessage(error, 'SLOT_UNAVAILABLE', BOOKING_MESSAGES.slotTaken),
+          suggestions: toSuggestions(error.suggestions, start),
+        };
+      }
+      if (error.code === 'BOOKING_LIMIT_REACHED') {
+        return { ok: false, kind: 'limit', message: serverMessage(error, 'BOOKING_LIMIT_REACHED', BOOKING_MESSAGES.limit) };
+      }
+      return { ok: false, kind: 'unavailable', message: BOOKING_MESSAGES.bookingUnavailable };
+    case 422:
+      return { ok: false, kind: 'reused', message: serverMessage(error, 'IDEMPOTENCY_KEY_REUSED', BOOKING_MESSAGES.reused) };
+    case 429:
+      return { ok: false, kind: 'rateLimited', message: BOOKING_MESSAGES.bookingRateLimited };
+    default:
+      return { ok: false, kind: 'unavailable', message: BOOKING_MESSAGES.bookingUnavailable };
+  }
+}
+
+/** Chave por tentativa (critério 25): a mesma para o mesmo conteúdo; nova quando muda ou após reset(). */
+export function createAttemptKeys(randomUUID) {
+  let lastPayload = null;
+  let key = null;
+  return {
+    keyFor(payload) {
+      const serialized = JSON.stringify(payload);
+      if (key === null || serialized !== lastPayload) {
+        key = randomUUID();
+        lastPayload = serialized;
+      }
+      return key;
+    },
+    reset() {
+      key = null;
+      lastPayload = null;
+    },
+  };
+}
+
+/** Linhas `{ label, value }` da tela de sucesso (critério 27). Não string vira ''. */
+export function successDetails(appointment) {
+  const a = appointment || {};
+  const service = a.service || {};
+  const professional = a.professional || {};
+  const business = a.business || {};
+  const start = text(a.start);
+  const end = text(a.end);
+  const date = start.slice(0, 10);
+  const weekday = Number.isInteger(a.weekday) ? a.weekday : isoWeekdayOfDate(date);
+  const short = WEEKDAY_SHORT[weekday] || '';
+  const dmy = isLocalDateTime(start) ? `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}` : '';
+  const hours =
+    isLocalDateTime(start) && isLocalDateTime(end) ? `${timeOf(start)} – ${timeOf(end, { end: true, date })} (${text(a.timezone)})` : '';
+  const serviceParts = [text(service.name), text(service.durationLabel), text(service.priceLabel)].filter(Boolean);
+  return [
+    { label: 'Data', value: dmy ? (short ? `${short}, ${dmy}` : dmy) : '' },
+    { label: 'Horário', value: hours },
+    { label: 'Serviço', value: serviceParts.join(' · ') },
+    { label: 'Profissional', value: text(professional.name) },
+    { label: 'Endereço', value: text(business.address) },
+  ];
+}
+
+/** Só tel:+55 com 10 ou 11 dígitos; senão null. */
+export function safePhoneHref(href) {
+  return typeof href === 'string' && /^tel:\+55\d{10,11}$/.test(href) ? href : null;
+}
+
+/** 'sex, 27/11 · 10:15' em outro dia; '10:15' no mesmo dia. */
+export function suggestionLabel(suggestion) {
+  if (!suggestion) return '';
+  return suggestion.dateLabel ? `${suggestion.dateLabel} · ${suggestion.label}` : suggestion.label;
 }

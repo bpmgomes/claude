@@ -147,8 +147,8 @@ function professionalOption(professional) {
 /**
  * Passo "Seus dados" (AF-04, 4.4). Formulário real para o autocomplete do navegador, sem `action`
  * nem `method`: o envio é sempre interceptado no JS e a CSP tem `form-action 'none'`. Sem
- * `maxlength` (cortaria em silêncio um telefone colado com máscara). Até o AF-11, o botão fica
- * desabilitado e nenhum dado sai do navegador. Cada erro de campo fica num `<p aria-live="polite">`
+ * `maxlength` (cortaria em silêncio um telefone colado com máscara). Desde o AF-11, o botão
+ * confirma o agendamento (POST com `credentials: 'omit'`). Cada erro de campo fica num `<p aria-live="polite">`
  * sempre presente (vazio sem erro): um live region oculto com `hidden` não é anunciado de forma
  * confiável ao aparecer.
  */
@@ -172,9 +172,20 @@ function customerForm(business) {
 <input id="bk-email" name="email" type="email" autocomplete="email" autocapitalize="off" spellcheck="false" required aria-describedby="bk-email-erro">
 <p class="pp-field-error" id="bk-email-erro" aria-live="polite"></p>
 </div>
-<button type="submit" class="pp-confirm-button" disabled aria-describedby="confirmar-aviso">Confirmar agendamento</button>
-<p id="confirmar-aviso" class="pp-notice">A confirmação online chega em breve. Este horário ainda não está reservado: para garantir, ligue para ${business.phoneDisplay}.</p>
+<button type="submit" class="pp-confirm-button">Confirmar agendamento</button>
 </form>`;
+}
+
+/**
+ * Tela de sucesso (AF-11, 4.4), vazia e oculta: os dados do 201 entram só por `textContent`. Não
+ * promete e-mail nem link de cancelar (critério 28).
+ */
+function successSection(business) {
+  return html`<section class="pp-success" hidden tabindex="-1" aria-labelledby="sucesso-titulo">
+<h2 id="sucesso-titulo" tabindex="-1">Agendamento confirmado</h2>
+<dl class="pp-success-details"></dl>
+<p class="pp-success-phone">Para mudar ou cancelar, ligue para <a class="pp-success-phone-link" href="${business.phoneHref}">${business.phoneDisplay}</a>.</p>
+</section>`;
 }
 
 /** Seção de horários (AF-10, 4.4): oculta sem JavaScript, com o aviso do <noscript>. */
@@ -199,9 +210,12 @@ ${page.professionals.map(professionalOption)}</select>
 <ul class="pp-slots" aria-label="Horários livres"></ul>
 <div class="pp-confirm" hidden>
 <p class="pp-selected"></p>
+<div class="pp-alert" role="alert" hidden></div>
+<div class="pp-suggestions" hidden><p class="pp-suggestions-title">Horários livres próximos</p><ul class="pp-suggestions-list"></ul></div>
 ${customerForm(business)}
 </div>
 </section>
+${successSection(business)}
 </div>`;
 }
 
@@ -232,7 +246,7 @@ ${header(business)}
 <main>
 ${
   page.hasOffer
-    ? html`<p class="pp-notice" id="agendar-aviso">Veja os horários livres abaixo. A confirmação online chega em breve; por enquanto, ligue para ${business.phoneDisplay}.</p>`
+    ? html`<p class="pp-notice" id="agendar-aviso">Escolha um horário livre abaixo e confirme online. Se preferir, ligue para ${business.phoneDisplay}.</p>`
     : html`<p class="pp-notice" id="agendar-aviso">Agendamento online em breve. Por enquanto, ligue para ${business.phoneDisplay}.</p>`
 }
 ${page.hasOffer ? offer(page) : emptyState(business)}

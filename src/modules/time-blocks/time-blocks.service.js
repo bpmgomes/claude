@@ -1,4 +1,4 @@
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { PROFESSIONAL_ID_RE, PROFESSIONAL_MESSAGES } from '../../shared/professionals.js';
 import {
   validateTimeBlockInput,
@@ -22,30 +22,40 @@ import {
   ServiceUnavailableError,
 } from '../../http/errors.js';
 import { noAppointments } from '../appointments/appointments-port.js';
+import { signConflictsToken, verifyConflictsToken } from './conflicts-token.js';
 
 const noopLog = { info() {}, warn() {}, error() {} };
 const DAY_MS = 86_400_000;
-const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+/** Formato do `versionKey` da porta real (sha256 base64url): exigido quando há conflitos. */
+const VERSION_KEY_RE = /^[A-Za-z0-9_-]{43}$/;
 
 export const TIME_ADJUSTED_CODE = 'TIME_BLOCK_TIME_ADJUSTED';
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-/**
- * Versão da lista de conflitos exibida, presa ao alvo e ao período (design 4.3). Não é segredo
- * nem autorização: o dono sempre pode confirmar. 43 caracteres base64url.
- */
-export function conflictsToken(businessId, { professionalId, startsAt, endsAt }, versionKey) {
-  const payload = JSON.stringify([businessId, professionalId ?? '*', startsAt, endsAt, String(versionKey ?? '')]);
-  return createHash('sha256').update(payload).digest('base64url');
+/** Porta de conflitos com resultado inutilizável (AF-11, critério 37): tratado como falha da porta. */
+class MalformedConflictsError extends Error {
+  constructor() {
+    super('Resultado de findConflictsForBlock inválido.');
+    this.name = 'MalformedConflictsError';
+    this.code = 'CONFLICTS_MALFORMED';
+  }
 }
 
-/** Resultado da porta normalizado (defesa contra implementação malformada). */
+/**
+ * Resultado da porta normalizado (defesa contra implementação malformada). Com `total > 0`, o
+ * `versionKey` precisa ser string no formato da porta real: vazio, não string ou fora do formato
+ * é falha da porta (503), nunca `''` (AF-16 item 2). Com `total === 0`, o `versionKey` não é usado.
+ * @throws {MalformedConflictsError}
+ */
 function normalizeConflicts(found) {
   const total = Number.isInteger(found?.total) && found.total >= 0 ? found.total : 0;
   const items = Array.isArray(found?.items) ? found.items.slice(0, CONFLICTS_LIST_MAX) : [];
-  const versionKey = typeof found?.versionKey === 'string' ? found.versionKey : '';
-  return { total, items, versionKey };
+  const versionKey = found?.versionKey;
+  if (total > 0 && !(typeof versionKey === 'string' && VERSION_KEY_RE.test(versionKey))) {
+    throw new MalformedConflictsError();
+  }
+  return { total, items, versionKey: total > 0 ? versionKey : '' };
 }
 
 /** Duração em minutos de parede (só para o log). */
@@ -62,6 +72,7 @@ function durationMinutes(start, end) {
  *   professionalsRepository: ReturnType<typeof import('../professionals/professionals.repository.js').createProfessionalsRepository>,
  *   businessesRepository: ReturnType<typeof import('../businesses/businesses.repository.js').createBusinessesRepository>,
  *   appointments?: import('../appointments/appointments-port.js').AppointmentsPort,
+ *   conflictsTokenSecret: string,   // obrigatório: resolveConflictsTokenSecret (AF-11, critério 36)
  *   now?: () => Date,
  *   log?: { info: Function, warn: Function, error: Function },
  * }} deps
@@ -72,9 +83,13 @@ export function createTimeBlocksService({
   professionalsRepository,
   businessesRepository,
   appointments = noAppointments,
+  conflictsTokenSecret,
   now = () => new Date(),
   log = noopLog,
 }) {
+  if (typeof conflictsTokenSecret !== 'string' || conflictsTokenSecret.length === 0) {
+    throw new TypeError('createTimeBlocksService exige conflictsTokenSecret.');
+  }
   /** O negócio vem sempre da sessão; nunca do cliente (critério 20). */
   async function businessOf(ownerId) {
     const business = await businessesRepository.findByOwnerId(ownerId);
@@ -178,23 +193,34 @@ export function createTimeBlocksService({
             conflicts = normalizeConflicts(
               await appointments.findConflictsForBlock(business.id, block, CONFLICTS_LIST_MAX, tx),
             );
-          } catch {
-            log.warn({ event: 'time_block_conflicts_failed', userId: ownerId, businessId: business.id });
+          } catch (err) {
+            // A causa é logada sem dado de cliente (AF-16 item 4): só o código e o tipo.
+            log.warn({
+              event: 'time_block_conflicts_failed',
+              userId: ownerId,
+              businessId: business.id,
+              errCode: err?.code,
+              errName: err?.name,
+            });
             throw new ServiceUnavailableError('CONFLICTS_UNAVAILABLE', M.conflictsUnavailable);
           }
 
-          const token = conflictsToken(business.id, block, conflicts.versionKey);
-          if (conflicts.total > 0 && !(typeof sentToken === 'string' && TOKEN_RE.test(sentToken) && sentToken === token)) {
-            const changed = sentToken !== undefined && sentToken !== null;
-            throw new TimeBlockConflictsError(
-              changed ? 'TIME_BLOCK_CONFLICTS_CHANGED' : 'TIME_BLOCK_CONFLICTS',
-              changed ? M.conflictsChanged : M.conflicts,
-              {
-                conflicts: conflicts.items.map((item) => toOwnerConflict(item, timeZone)),
-                conflictsTotal: conflicts.total,
-                conflictsToken: token,
-              },
-            );
+          if (conflicts.total > 0) {
+            // O token é preso ao usuário da sessão, ao negócio, ao alvo, ao período, à lista e ao
+            // prazo (AF-16 item 1). Qualquer divergência é "a lista mudou", nunca 400 e sem eco.
+            const claims = { userId: ownerId, businessId: business.id, ...block, versionKey: conflicts.versionKey };
+            if (!verifyConflictsToken(conflictsTokenSecret, sentToken, claims, nowMs)) {
+              const changed = sentToken !== undefined && sentToken !== null;
+              throw new TimeBlockConflictsError(
+                changed ? 'TIME_BLOCK_CONFLICTS_CHANGED' : 'TIME_BLOCK_CONFLICTS',
+                changed ? M.conflictsChanged : M.conflicts,
+                {
+                  conflicts: conflicts.items.map((item) => toOwnerConflict(item, timeZone)),
+                  conflictsTotal: conflicts.total,
+                  conflictsToken: signConflictsToken(conflictsTokenSecret, claims, nowMs),
+                },
+              );
+            }
           }
 
           await timeBlocksRepository.insert(

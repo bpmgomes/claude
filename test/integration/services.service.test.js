@@ -8,6 +8,9 @@ import { createBusinessesRepository } from '../../src/modules/businesses/busines
 import { createServicesRepository, toServiceSnapshot } from '../../src/modules/services/services.repository.js';
 import { createServicesService } from '../../src/modules/services/services.service.js';
 import { createClock } from '../helpers/clock.js';
+import { realAppointmentsPort, seedRealAppointment, cancelDirect } from '../helpers/appointments.js';
+import { createProfessionalsRepository } from '../../src/modules/professionals/professionals.repository.js';
+import { textKey } from '../../src/shared/validation.js';
 
 let db;
 let ownerId;
@@ -15,6 +18,7 @@ let businessId;
 let servicesRepository;
 let businessesRepository;
 let clock;
+let appointments;
 
 beforeEach(async () => {
   db = createDatabase({ databasePath: ':memory:' });
@@ -41,6 +45,7 @@ beforeEach(async () => {
     createdAt: clock.now().toISOString(),
   });
   servicesRepository = createServicesRepository(db);
+  appointments = await realAppointmentsPort(db);
 });
 
 afterEach(async () => {
@@ -48,7 +53,9 @@ afterEach(async () => {
 });
 
 function build(extra = {}) {
-  return createServicesService({ db, servicesRepository, businessesRepository, now: clock.now, ...extra });
+  // Critério 31 do AF-11: "sem agendamentos" é o repositório real com a tabela vazia; portas falsas
+  // ficam só para simular contagem fixa ou falha.
+  return createServicesService({ db, servicesRepository, businessesRepository, appointments, now: clock.now, ...extra });
 }
 
 test('porta appointments: deactivate devolve a contagem e a porta recebe (businessId, serviceId, nowIso)', async () => {
@@ -88,9 +95,23 @@ test('porta que lança: serviço desativado mesmo assim, futureAppointmentsCount
 });
 
 test('sem porta: usa noAppointments (0)', async () => {
-  const service = build();
+  const service = createServicesService({ db, servicesRepository, businessesRepository, now: clock.now });
   const created = await service.create(ownerId, { name: 'Corte', durationMinutes: 30, price: '50' });
   assert.equal((await service.deactivate(ownerId, created.id)).futureAppointmentsCount, 0);
+});
+
+test('repositório real (AF-11): 0 sem agendamentos; conta só os futuros não cancelados do serviço', async () => {
+  const service = build();
+  const created = await service.create(ownerId, { name: 'Corte', durationMinutes: 60, price: '50' });
+  const professionalId = randomUUID();
+  await createProfessionalsRepository(db).insert({ id: professionalId, businessId, name: 'Ana', nameKey: textKey('Ana'), createdAt: clock.now().toISOString() });
+  const seed = (startsAt, status) => seedRealAppointment(db, { businessId, professionalId, serviceId: created.id, startsAt, status });
+  await seed('2026-03-02T13:00:00.000Z');
+  await seed('2026-03-02T15:00:00.000Z', 'cancelled');
+  await seed('2026-02-27T13:00:00.000Z'); // passado
+  const { id } = await seed('2026-03-03T13:00:00.000Z');
+  await cancelDirect(db, id);
+  assert.equal((await service.deactivate(ownerId, created.id)).futureAppointmentsCount, 1);
 });
 
 test('editar preço e duração não altera um snapshot tirado antes (critério 11)', async () => {

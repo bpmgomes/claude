@@ -114,7 +114,10 @@ test('AF-10: todo o grafo de imports do módulo de horários tem modulepreload e
     const jsBytes = [...graph.values()].reduce((a, b) => a + b, 0);
     // AF-04: o passo "Seus dados" acrescenta /shared/customers.js e /js/customer-form-controller.js
     // (cerca de 11 KB sem compressão); o teto do JS sobe de 60 para 80 KB. O orçamento total segue 500 KB.
-    assert.ok(jsBytes < 80 * 1024, `JS do grafo: ${jsBytes} B`);
+    // AF-11: a confirmação (envio, 409 com sugestões, erros do servidor e tela de sucesso) acrescenta
+    // cerca de 11 KB sem compressão aos dois módulos públicos; o teto do JS sobe de 80 para 88 KB.
+    // O orçamento total (500 KB) e a meta de 2 s do `npm run perf` não mudam.
+    assert.ok(jsBytes < 88 * 1024, `JS do grafo: ${jsBytes} B`);
     const { total, report } = await measure(app, seed.slug);
     assert.ok(total <= PUBLIC_PAGE_BYTES_BUDGET, `total ${total} B acima do orçamento:\n${report}`);
   } finally {

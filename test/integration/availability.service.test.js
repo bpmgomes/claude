@@ -82,13 +82,20 @@ describe('serviço de disponibilidade', () => {
     const appointments = fakeAppointments({
       busy: { [a.id]: [{ startsAt: '2026-11-27T13:00:00.000Z', endsAt: '2026-11-27T14:00:00.000Z' }] },
     });
-    const res = await serviceFor(app, { appointments, now: clock.now }).getAvailability('salao-da-ana', query());
+    const service = serviceFor(app, { appointments, now: clock.now });
+    const res = await service.getAvailability('salao-da-ana', query());
     assert.deepEqual(res.professionals, [a.id, b.id]);
+    // Em "qualquer" (AF-11, decisão 4) o horário não traz `professionals`, mas continua livre por B.
     const starts = new Map(startsOf(res, '2026-11-27'));
-    assert.deepEqual(starts.get('09:00'), [0, 1]);
-    assert.deepEqual(starts.get('09:15'), [1]);
-    assert.deepEqual(starts.get('10:45'), [1]);
-    assert.deepEqual(starts.get('11:00'), [0, 1]);
+    for (const t of ['09:00', '09:15', '10:45', '11:00']) assert.ok(starts.has(t), t);
+    assert.ok([...starts.values()].every((v) => v === undefined));
+    const onlyA = new Map(startsOf(await service.getAvailability('salao-da-ana', query({ professionalId: a.id })), '2026-11-27'));
+    assert.deepEqual(onlyA.get('09:00'), [0]);
+    assert.equal(onlyA.has('09:15'), false);
+    assert.equal(onlyA.has('10:45'), false);
+    assert.deepEqual(onlyA.get('11:00'), [0]);
+    const onlyB = new Map(startsOf(await service.getAvailability('salao-da-ana', query({ professionalId: b.id })), '2026-11-27'));
+    assert.deepEqual(onlyB.get('09:15'), [0]);
   });
 
   test('a porta recebe professionalId null em any, o UUID no modo específico e o período em ISO', async () => {
@@ -116,8 +123,10 @@ describe('serviço de disponibilidade', () => {
     assert.equal(log.entries.length, 1);
     assert.equal(log.entries[0].event, 'availability_appointments_failed');
     assert.equal(log.entries[0].level, 'warn');
-    assert.equal(log.entries[0].code, 'SQLITE_BUSY');
-    assert.equal(log.entries[0].name, 'Error');
+    // errCode/errName (AF-11, 4.3): `name` é redigido no log do app.
+    assert.equal(log.entries[0].errCode, 'SQLITE_BUSY');
+    assert.equal(log.entries[0].errName, 'Error');
+    assert.equal('name' in log.entries[0], false);
     assert.equal(JSON.stringify(log.entries).includes('salao-da-ana'), false);
     assert.equal(JSON.stringify(log.entries).includes('banco fora'), false);
   });

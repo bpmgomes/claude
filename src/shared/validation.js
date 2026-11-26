@@ -36,10 +36,14 @@ const FORBIDDEN_CHARS = /[\p{Cc}\p{Cf}]/u;
 const PHONE_ALLOWED = /^[0-9\s().+-]*$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** @returns {string} */
+/**
+ * trim + NFC + minúsculas (AF-11, decisão 15): o mesmo endereço em forma composta e decomposta
+ * vira uma chave só (clientes do AF-04 e contas do dono do AF-01).
+ * @returns {string}
+ */
 export function normalizeEmail(raw) {
   if (typeof raw !== 'string') return '';
-  return raw.trim().toLowerCase();
+  return raw.trim().normalize('NFC').toLowerCase();
 }
 
 /** @returns {string|null} */

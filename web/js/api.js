@@ -6,12 +6,14 @@ export const GENERIC_ERROR_MESSAGE = 'Não foi possível concluir agora. Verifiq
  * @param {string} url
  * `credentials`: padrão `same-origin` (telas do dono, que dependem do cookie). O JS público
  * (`web/js/public-*.js`) passa sempre `'omit'` (AF-10 item 5, AF-04 critério 16).
- * @param {{ method?: string, body?: unknown, fetchFn?: typeof fetch, signal?: AbortSignal, credentials?: RequestCredentials }} [options]
+ * `headers`: cabeçalhos extras (ex.: `Idempotency-Key` do AF-11), mesclados depois de `Accept` e
+ * `Content-Type`; só chaves string com valor string são copiadas.
+ * @param {{ method?: string, body?: unknown, fetchFn?: typeof fetch, signal?: AbortSignal, credentials?: RequestCredentials, headers?: Record<string, string> }} [options]
  * @returns {Promise<{ ok: boolean, status: number, body: any, error: { code: string, message: string, fields?: Record<string,string> } | null }>}
  */
 export async function requestJson(
   url,
-  { method = 'GET', body, fetchFn = globalThis.fetch, signal, credentials = 'same-origin' } = {},
+  { method = 'GET', body, fetchFn = globalThis.fetch, signal, credentials = 'same-origin', headers } = {},
 ) {
   let response;
   try {
@@ -20,6 +22,11 @@ export async function requestJson(
     if (body !== undefined) {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
+    }
+    if (headers && typeof headers === 'object') {
+      for (const key of Object.keys(headers)) {
+        if (typeof key === 'string' && typeof headers[key] === 'string') init.headers[key] = headers[key];
+      }
     }
     response = await fetchFn(url, init);
   } catch {

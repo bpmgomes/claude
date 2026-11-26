@@ -351,7 +351,7 @@ describe('ação de agendar e 404 (critérios 6, 8 e 13)', () => {
       const link = page.locator('.pp-book').first();
       assert.equal(await link.textContent(), 'Ver horários');
       assert.equal(await link.getAttribute('href'), `?servico=${services[0].id}#agendar`);
-      assert.match(await page.locator('#agendar-aviso').textContent(), /Veja os horários livres abaixo/);
+      assert.match(await page.locator('#agendar-aviso').textContent(), /Escolha um horário livre abaixo e confirme online/);
       await link.click();
       await waitReady(page);
       assert.equal(await page.locator('#bk-service').inputValue(), services[0].id);
@@ -452,7 +452,7 @@ describe('horários disponíveis (AF-10, critérios 22 e 28 a 30)', () => {
     });
   }
 
-  test('escolher um horário mostra o resumo e Confirmar agendamento visível e desabilitado, com o aviso (critério 22)', async () => {
+  test('escolher um horário mostra o resumo e Confirmar agendamento visível e habilitado, sem o aviso antigo (critério 22; AF-11)', async () => {
     const { context, page } = await open('/referencia');
     try {
       const [service] = server.data.reference.services;
@@ -465,11 +465,11 @@ describe('horários disponíveis (AF-10, critérios 22 e 28 a 30)', () => {
       assert.equal(await page.locator('.pp-slot[aria-pressed="true"]').count(), 1);
       const confirm = page.locator('.pp-confirm-button');
       assert.equal(await confirm.isVisible(), true);
-      assert.equal(await confirm.isDisabled(), true);
+      assert.equal(await confirm.isDisabled(), false);
       assert.equal(await confirm.textContent(), 'Confirmar agendamento');
       const end = `09:${String(service.durationMinutes % 60).padStart(2, '0')}`;
       assert.equal(await page.locator('.pp-selected').textContent(), `${service.name} · sex, 27/11 · 09:00 – ${end} (America/Sao_Paulo)`);
-      assert.match(await page.locator('#confirmar-aviso').textContent(), /Este horário ainda não está reservado/);
+      assert.equal(await page.locator('#confirmar-aviso').count(), 0);
       const box = await confirm.boundingBox();
       assert.ok(box.width >= 44 && box.height >= 44);
     } finally {
@@ -630,7 +630,7 @@ describe('passo "Seus dados" (AF-04)', () => {
     if (customerServer) await customerServer.close();
   });
 
-  test('escolher o horário mostra os três campos, o aviso de privacidade e o botão desabilitado (critérios 21, 22 e 25)', async () => {
+  test('escolher o horário mostra os três campos, o aviso de privacidade e o botão habilitado (critérios 21, 22 e 25; AF-11)', async () => {
     const { context, page } = await openCustomerStep();
     try {
       for (const id of ['#bk-name', '#bk-phone', '#bk-email']) assert.equal(await page.locator(id).isVisible(), true, id);
@@ -644,11 +644,11 @@ describe('passo "Seus dados" (AF-04)', () => {
       assert.ok(privacy.includes(customerServer.data.reference.business.name));
       const button = page.locator('#bk-customer .pp-confirm-button');
       assert.equal(await button.isVisible(), true);
-      assert.equal(await button.isDisabled(), true);
+      assert.equal(await button.isDisabled(), false);
       assert.equal(await button.textContent(), 'Confirmar agendamento');
       const text = (await page.locator('.pp-confirm').innerText()).toLowerCase();
       assert.equal(text.includes('confirmado'), false);
-      assert.match(text, /este horário ainda não está reservado/);
+      assert.equal(text.includes('ainda não está reservado'), false);
     } finally {
       await context.close();
     }
@@ -788,21 +788,20 @@ describe('passo "Seus dados" (AF-04)', () => {
     }
   });
 
-  test('sem rede no passo: digitar, Enter e clicar no botão desabilitado não geram requisição nem mudam a URL (decisão 3)', async () => {
+  test('Enter no passo envia uma vez pelo fetch (AF-11; antes, decisão 3: nenhuma requisição); envio nativo bloqueado e nada na URL', async () => {
     const { context, page } = await openCustomerStep();
     try {
       const requests = [];
       page.on('request', (req) => requests.push(`${req.method()} ${req.url()}`));
-      const url = page.url();
       await page.fill('#bk-name', 'Ana Souza');
       await page.fill('#bk-phone', '(11) 91234-5678');
       await page.fill('#bk-email', 'ana@example.com');
       await page.locator('#bk-email').press('Enter');
-      await page.locator('#bk-name').press('Enter');
-      await page.locator('#bk-customer .pp-confirm-button').click({ force: true, timeout: 2000 }).catch(() => {});
-      await page.waitForTimeout(300);
-      assert.deepEqual(requests, []);
-      assert.equal(page.url(), url);
+      await page.locator('.pp-success').waitFor({ state: 'visible' });
+      const posts = requests.filter((r) => r.startsWith('POST '));
+      assert.equal(posts.length, 1);
+      assert.match(posts[0], /\/api\/public\/dados\/appointments$/);
+      assert.equal(new URL(page.url()).search, '');
       for (const value of ['Ana', 'ana%40example', '91234']) assert.equal(page.url().includes(value), false);
       const stored = await page.evaluate(() => localStorage.length + sessionStorage.length);
       assert.equal(stored, 0);

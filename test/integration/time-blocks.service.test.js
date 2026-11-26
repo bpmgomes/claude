@@ -21,6 +21,8 @@ import { TIME_BLOCK_MESSAGES as M, CONFLICTS_LIST_MAX, TIME_BLOCKS_ACTIVE_MAX } 
 import { createMemoryStorage } from '../../src/storage/memory.js';
 import { textKey } from '../../src/shared/validation.js';
 import { createClock } from '../helpers/clock.js';
+import { TEST_CONFLICTS_TOKEN_SECRET } from '../helpers/test-app.js';
+import { signConflictsToken, CONFLICTS_TOKEN_RE } from '../../src/modules/time-blocks/conflicts-token.js';
 
 const DAY_MS = 86_400_000;
 
@@ -70,10 +72,15 @@ function build(extra = {}) {
     timeBlocksRepository,
     professionalsRepository,
     businessesRepository,
+    conflictsTokenSecret: TEST_CONFLICTS_TOKEN_SECRET,
     now: clock.now,
     ...extra,
   });
 }
+
+/** versionKey no formato da porta real (43 caracteres base64url). */
+const VK1 = 'a'.repeat(43);
+const VK2 = 'b'.repeat(43);
 
 async function makeProfessional(name = 'Ana Souza') {
   const id = randomUUID();
@@ -107,7 +114,7 @@ function fakePort(state) {
       // Consulta pelo conn: com o `db` global, o adapter SQLite travaria esperando a transação.
       await conn.get('SELECT 1 AS ok');
       const items = Array.from({ length: Math.min(state.total, limit) }, (_, n) => conflictItem(n));
-      return { total: state.total, items, versionKey: state.versionKey ?? 'v1' };
+      return { total: state.total, items, versionKey: 'versionKey' in state ? state.versionKey : VK1 };
     },
   };
 }
@@ -158,7 +165,7 @@ describe('conflitos com agendamentos (critérios 9 a 12)', () => {
       professionalName: 'Ana Souza',
       customerName: 'Cliente 0',
     });
-    assert.match(error.conflictsToken, /^[A-Za-z0-9_-]{43}$/);
+    assert.match(error.conflictsToken, CONFLICTS_TOKEN_RE);
     assert.equal(await countBlocks(), 0);
     assert.deepEqual(port.calls[0].block, {
       professionalId: p,
@@ -177,11 +184,11 @@ describe('conflitos com agendamentos (critérios 9 a 12)', () => {
 
   test('a lista mudou: o token antigo dá …_CHANGED com o token novo e nada é criado', async () => {
     const p = await makeProfessional();
-    const state = { total: 2, versionKey: 'v1' };
+    const state = { total: 2, versionKey: VK1 };
     const service = build({ appointments: fakePort(state) });
     const first = await service.create(ownerId, input(p)).catch((err) => err);
     state.total = 3;
-    state.versionKey = 'v2';
+    state.versionKey = VK2;
     const second = await service.create(ownerId, input(p, { confirmConflictsToken: first.conflictsToken })).catch((err) => err);
     assert.ok(second instanceof TimeBlockConflictsError);
     assert.equal(second.code, 'TIME_BLOCK_CONFLICTS_CHANGED');
@@ -219,7 +226,7 @@ describe('conflitos com agendamentos (critérios 9 a 12)', () => {
     assert.equal(await countBlocks(), 2);
   });
 
-  test('porta nula (padrão até o AF-11) cria direto', async () => {
+  test('porta nula (só nos testes desde o AF-11) cria direto', async () => {
     const p = await makeProfessional();
     const result = await build().create(ownerId, input(p));
     assert.equal(result.acknowledgedConflictsCount, 0);
@@ -239,6 +246,21 @@ describe('conflitos com agendamentos (critérios 9 a 12)', () => {
     assert.ok(entries.some((e) => e.level === 'warn' && e.event === 'time_block_conflicts_failed'));
   });
 
+  test('falha da porta é logada com errCode e errName da causa, sem dado de cliente (AF-16 item 4)', async () => {
+    const p = await makeProfessional();
+    const { entries, log } = captureLog();
+    const cause = Object.assign(new TypeError('Cliente Secreto'), { code: 'EBOOM' });
+    const service = build({
+      appointments: { findConflictsForBlock: async () => { throw cause; } },
+      log,
+    });
+    await service.create(ownerId, input(p)).catch((e) => e);
+    const entry = entries.find((e) => e.event === 'time_block_conflicts_failed');
+    assert.equal(entry.errCode, 'EBOOM');
+    assert.equal(entry.errName, 'TypeError');
+    assert.ok(!JSON.stringify(entries).includes('Cliente Secreto'));
+  });
+
   test('mais de 50 conflitos: 50 itens e conflictsTotal real', async () => {
     const service = build({ appointments: fakePort({ total: 120 }) });
     const err = await service.create(ownerId, input(null)).catch((e) => e);
@@ -250,6 +272,109 @@ describe('conflitos com agendamentos (critérios 9 a 12)', () => {
     const port = fakePort({ total: 0 });
     await build({ appointments: port }).create(ownerId, input(null));
     assert.equal(port.calls[0].block.professionalId, null);
+  });
+});
+
+describe('token HMAC de conflitos (AF-11, critério 36)', () => {
+  const claimsFor = (p, over = {}) => ({
+    userId: ownerId,
+    businessId,
+    professionalId: p,
+    startsAt: '2026-12-24T17:00:00.000Z',
+    endsAt: '2026-12-24T21:00:00.000Z',
+    versionKey: VK1,
+    ...over,
+  });
+
+  async function expectChanged(service, p, token, total = 1) {
+    const err = await service.create(ownerId, input(p, { confirmConflictsToken: token })).catch((e) => e);
+    assert.ok(err instanceof TimeBlockConflictsError, String(err));
+    assert.equal(err.code, 'TIME_BLOCK_CONFLICTS_CHANGED');
+    assert.equal(err.conflictsTotal, total);
+    assert.match(err.conflictsToken, CONFLICTS_TOKEN_RE);
+    assert.notEqual(err.conflictsToken, token);
+    assert.equal(await countBlocks(), 0);
+    return err;
+  }
+
+  test('o token assinado para o dono, o alvo e o período atuais cria (57 caracteres, v1.<exp>.<mac>)', async () => {
+    const p = await makeProfessional();
+    const service = build({ appointments: fakePort({ total: 1 }) });
+    const token = signConflictsToken(TEST_CONFLICTS_TOKEN_SECRET, claimsFor(p), clock.now().getTime());
+    assert.equal(token.length, 57);
+    const created = await service.create(ownerId, input(p, { confirmConflictsToken: token }));
+    assert.equal(created.acknowledgedConflictsCount, 1);
+  });
+
+  test('token assinado com outro userId (signConflictsToken) enviado pelo dono dá …_CHANGED', async () => {
+    const p = await makeProfessional();
+    const service = build({ appointments: fakePort({ total: 1 }) });
+    const token = signConflictsToken(TEST_CONFLICTS_TOKEN_SECRET, claimsFor(p, { userId: randomUUID() }), clock.now().getTime());
+    await expectChanged(service, p, token);
+  });
+
+  test('token de outro período, de outro alvo, de outro negócio ou com outro segredo dá …_CHANGED', async () => {
+    const p = await makeProfessional();
+    const service = build({ appointments: fakePort({ total: 1 }) });
+    const nowMs = clock.now().getTime();
+    for (const over of [
+      { endsAt: '2026-12-24T22:00:00.000Z' },
+      { startsAt: '2026-12-24T16:00:00.000Z' },
+      { professionalId: null },
+      { professionalId: randomUUID() },
+      { businessId: randomUUID() },
+      { versionKey: VK2 },
+    ]) {
+      await expectChanged(service, p, signConflictsToken(TEST_CONFLICTS_TOKEN_SECRET, claimsFor(p, over), nowMs));
+    }
+    await expectChanged(service, p, signConflictsToken('outro-segredo-com-mais-de-32-caracteres!!', claimsFor(p), nowMs));
+  });
+
+  test('token expirado (relógio + 11 min) dá …_CHANGED com token novo; nada é gravado', async () => {
+    const p = await makeProfessional();
+    const service = build({ appointments: fakePort({ total: 1 }) });
+    const first = await service.create(ownerId, input(p)).catch((e) => e);
+    clock.advance(11 * 60_000);
+    const second = await expectChanged(service, p, first.conflictsToken);
+    const created = await service.create(ownerId, input(p, { confirmConflictsToken: second.conflictsToken }));
+    assert.equal(created.acknowledgedConflictsCount, 1);
+  });
+
+  test('token malformado (formato antigo de 43 caracteres, null, número, objeto) nunca dá 400', async () => {
+    const p = await makeProfessional();
+    const service = build({ appointments: fakePort({ total: 1 }) });
+    for (const bad of ['a'.repeat(43), 'v1.0000000000.' + 'a'.repeat(43), 42, {}, ['x'], 'v1.' + 'x'.repeat(10_000)]) {
+      await expectChanged(service, p, bad);
+    }
+    const none = await service.create(ownerId, input(p, { confirmConflictsToken: null })).catch((e) => e);
+    assert.equal(none.code, 'TIME_BLOCK_CONFLICTS');
+  });
+});
+
+describe('versionKey inválido (AF-11, critério 37)', () => {
+  test("com total > 0 e versionKey '', null, 42 ou 'curto': 503 CONFLICTS_UNAVAILABLE e nada gravado", async () => {
+    const p = await makeProfessional();
+    for (const versionKey of ['', null, 42, 'curto', undefined]) {
+      const { entries, log } = captureLog();
+      const service = build({ appointments: fakePort({ total: 2, versionKey }), log });
+      const err = await service.create(ownerId, input(p)).catch((e) => e);
+      assert.ok(err instanceof ServiceUnavailableError, String(versionKey));
+      assert.equal(err.code, 'CONFLICTS_UNAVAILABLE');
+      assert.equal(await countBlocks(), 0);
+      assert.equal(entries.find((e) => e.event === 'time_block_conflicts_failed').errCode, 'CONFLICTS_MALFORMED');
+    }
+  });
+
+  test("com total 0 e versionKey '', cria", async () => {
+    const p = await makeProfessional();
+    const service = build({ appointments: fakePort({ total: 0, versionKey: '' }) });
+    assert.equal((await service.create(ownerId, input(p))).acknowledgedConflictsCount, 0);
+    assert.equal(await countBlocks(), 1);
+  });
+
+  test('createTimeBlocksService sem conflictsTokenSecret lança', () => {
+    assert.throws(() => build({ conflictsTokenSecret: undefined }), /conflictsTokenSecret/);
+    assert.throws(() => build({ conflictsTokenSecret: '' }), /conflictsTokenSecret/);
   });
 });
 

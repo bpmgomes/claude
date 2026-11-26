@@ -19,6 +19,11 @@ export const TIME_STEP_MINUTES = 15;
 export const DAY_END_MINUTE = 1440;
 export const INTERVALS_PER_DAY_MAX = 6;
 export const INTERVALS_PER_PROFESSIONAL_MAX = 42;
+/**
+ * Teto de agendamentos futuros varridos por `countFutureOutsideHours` (AF-11, decisão 16). Quando a
+ * contagem chega nele, o número é um limite inferior ("pelo menos 1.000").
+ */
+export const OUTSIDE_HOURS_SCAN_MAX = 1000;
 
 /** Mensagens fixas: a única interpolação é a posição `k` (1..6), calculada aqui (critério 11). */
 export const HOURS_MESSAGES = Object.freeze({

@@ -1,3 +1,8 @@
+import { createHash } from 'node:crypto';
+import { instantToLocal } from '../../shared/zoned-time.js';
+import { OUTSIDE_HOURS_SCAN_MAX } from '../../shared/working-hours.js';
+import { dayFrameOf, workWindowsForDay } from '../availability/availability-engine.js';
+
 /**
  * Porta para os agendamentos. O AF-11 implementa a porta com o repositório real neste
  * módulo (src/modules/appointments/) e passa a instância em `buildApp`.
@@ -10,22 +15,27 @@
  *   agendamentos futuros ficaram fora do novo expediente (`countFutureOutsideHours`). Só avisa,
  *   nunca cancela nem bloqueia.
  *
+ * Todos os métodos aceitam `conn` opcional (padrão: o `db` global do repositório). Dentro de uma
+ * transação, passe SEMPRE a `tx` (no SQLite, o adapter enfileira e a chamada com o `db` global
+ * travaria esperando a própria transação).
+ *
+ * @typedef {import('../../db/index.js').Database} Database
  * @typedef {{
- *   countFutureByService(businessId: string, serviceId: string, nowIso: string): Promise<number>,
+ *   countFutureByService(businessId: string, serviceId: string, nowIso: string, conn?: Database): Promise<number>,
  *   countFutureByProfessional(businessId: string, professionalId: string, nowIso: string,
- *                             conn: import('../../db/index.js').Database): Promise<number>,
- *   countFutureOutsideHours(businessId: string, professionalId: string, nowIso: string): Promise<number>,
+ *                             conn: Database): Promise<number>,
+ *   countFutureOutsideHours(businessId: string, professionalId: string, nowIso: string, conn?: Database): Promise<number>,
  *   findConflictsForBlock(businessId: string,
  *                         block: { professionalId: string|null, startsAt: string, endsAt: string },
  *                         limit: number,
- *                         conn: import('../../db/index.js').Database)
+ *                         conn: Database)
  *     : Promise<{ total: number,
  *                 items: Array<{ id: string, startsAt: string, endsAt: string, serviceName: string,
  *                                professionalId: string, professionalName: string, customerName: string }>,
  *                 versionKey: string }>,
  *   findBusyByBusiness(businessId: string,
  *                      filter: { professionalId: string|null },
- *                      fromIso: string, toIso: string)
+ *                      fromIso: string, toIso: string, conn?: Database)
  *     : Promise<Map<string, Array<{ startsAt: string, endsAt: string }>>>,
  * }} AppointmentsPort
  *
@@ -52,12 +62,17 @@ FIND_WEEKLY_IDS_MAX ids, e convertida no fuso do negócio).
  * (JOIN professionals removed_at IS NULL). `filter.professionalId` null = todos os ativos do negócio.
  * Uma consulta por business_id, sem IN (...) (critério 23), com o índice
  * appointments(business_id, starts_at) do AF-11. Instantes UTC ISO de 24 caracteres, como
- * time_blocks. Chamado FORA de transação, com o `db` global; período de até 32 dias. Profissional
+ * time_blocks. A disponibilidade chama FORA de transação, com o `db` global; a reserva do AF-11
+ * chama DENTRO da transação, com a `tx`. Período de até 32 dias. Profissional
  * sem ocupado não aparece no Map: use `map.get(id) ?? []`. Se lançar, a disponibilidade responde
  * 503 AVAILABILITY_UNAVAILABLE (nunca lista otimista).
  */
 
-/** Implementação nula até o AF-11: nunca há agendamentos. @type {AppointmentsPort} */
+/**
+ * Implementação nula: nunca há agendamentos. Desde o AF-11, `buildApp` usa a porta real
+ * (`createAppointmentsPort`); esta fica para os testes que simulam a porta.
+ * @type {AppointmentsPort}
+ */
 export const noAppointments = Object.freeze({
   countFutureByService: async () => 0,
   countFutureByProfessional: async () => 0,
@@ -65,3 +80,80 @@ export const noAppointments = Object.freeze({
   findConflictsForBlock: async () => ({ total: 0, items: [], versionKey: '' }),
   findBusyByBusiness: async () => new Map(),
 });
+
+/** `versionKey` do conjunto de conflitos: 43 caracteres base64url (sha256 de id|updated_at por id). */
+export function conflictsVersionKey(rows) {
+  const text = (Array.isArray(rows) ? rows : []).map((r) => `${r.id}|${r.updated_at}`).join('\n');
+  return createHash('sha256').update(text).digest('base64url');
+}
+
+/**
+ * Implementação real da porta (AF-11, critérios 31 a 37). Delega ao repositório e, em
+ * countFutureOutsideHours, ao motor do AF-10 para converter a grade em instantes.
+ * @param {{
+ *   appointmentsRepository: ReturnType<typeof import('./appointments.repository.js').createAppointmentsRepository>,
+ *   workingHoursRepository: ReturnType<typeof import('../working-hours/working-hours.repository.js').createWorkingHoursRepository>,
+ * }} deps
+ * @returns {AppointmentsPort}
+ */
+export function createAppointmentsPort({ appointmentsRepository, workingHoursRepository }) {
+  const repo = appointmentsRepository;
+  return Object.freeze({
+    countFutureByService(businessId, serviceId, nowIso, conn) {
+      return repo.countFutureByService(businessId, serviceId, nowIso, conn);
+    },
+
+    countFutureByProfessional(businessId, professionalId, nowIso, conn) {
+      return repo.countFutureByProfessional(businessId, professionalId, nowIso, conn);
+    },
+
+    /**
+     * Futuros não cancelados fora da grade ATUAL (design 5.5). Varre no máximo
+     * OUTSIDE_HOURS_SCAN_MAX agendamentos; nesse teto, o número é um limite inferior. Só avisa.
+     */
+    async countFutureOutsideHours(businessId, professionalId, nowIso, conn) {
+      const { rows, timezone } = await repo.findFutureByProfessional(
+        businessId,
+        professionalId,
+        nowIso,
+        OUTSIDE_HOURS_SCAN_MAX,
+        conn,
+      );
+      if (rows.length === 0) return 0;
+      const weekly = await workingHoursRepository.findByProfessional(businessId, professionalId, conn);
+      const windowsByDate = new Map();
+      let outside = 0;
+      for (const row of rows) {
+        const startMs = Date.parse(row.startsAt);
+        const endMs = Date.parse(row.endsAt);
+        const date = instantToLocal(startMs, timezone).slice(0, 10);
+        let windows = windowsByDate.get(date);
+        if (!windows) {
+          windows = workWindowsForDay(weekly, date, timezone, dayFrameOf(date, timezone));
+          windowsByDate.set(date, windows);
+        }
+        if (!windows.some((w) => w.startMs <= startMs && endMs <= w.endMs)) outside += 1;
+      }
+      return outside;
+    },
+
+    async findConflictsForBlock(businessId, block, limit, conn) {
+      const [total, items, rows] = [
+        await repo.countConflicts(businessId, block, conn),
+        await repo.listConflicts(businessId, block, limit, conn),
+        await repo.conflictVersionRows(businessId, block, conn),
+      ];
+      return { total, items, versionKey: conflictsVersionKey(rows) };
+    },
+
+    async findBusyByBusiness(businessId, { professionalId = null } = {}, fromIso, toIso, conn) {
+      const rows = await repo.findBusy(businessId, professionalId ?? null, fromIso, toIso, conn);
+      const map = new Map();
+      for (const row of rows) {
+        if (!map.has(row.professionalId)) map.set(row.professionalId, []);
+        map.get(row.professionalId).push({ startsAt: row.startsAt, endsAt: row.endsAt });
+      }
+      return map;
+    },
+  });
+}

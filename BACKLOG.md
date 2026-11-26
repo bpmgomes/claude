@@ -135,7 +135,7 @@ Critérios de aceite
 - Horários exibidos no fuso do negócio (America/Sao_Paulo por padrão).
 
 ### AF-11 · Confirmar agendamento
-Tipo: História · Prioridade: Alta · Pontos: 5 · Status: TODO
+Tipo: História · Prioridade: Alta · Pontos: 5 · Status: DONE
 
 Como cliente final, quero confirmar meu horário e receber um resumo.
 

@@ -1,10 +1,17 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { UniqueViolationError } from './errors.js';
+import { UniqueViolationError, ExclusionViolationError } from './errors.js';
 
 const SQLITE_CONSTRAINT_UNIQUE = 2067;
 const SQLITE_CONSTRAINT_PRIMARYKEY = 1555;
+const SQLITE_CONSTRAINT_TRIGGER = 1811;
+
+/**
+ * Restrições de exclusão implementadas por trigger com RAISE(ABORT, '<nome>') (AF-11, 3.1). A
+ * mensagem do erro é exatamente o nome; outra mensagem de trigger passa como está.
+ */
+export const EXCLUSION_CONSTRAINTS = Object.freeze(['appointments_no_overlap']);
 
 /**
  * Traduz erros do driver SQLite para erros neutros.
@@ -15,6 +22,10 @@ const SQLITE_CONSTRAINT_PRIMARYKEY = 1555;
  */
 export function translateError(err) {
   const message = String(err?.message ?? '');
+  const isTrigger = err?.errcode === SQLITE_CONSTRAINT_TRIGGER || err?.code === 'SQLITE_CONSTRAINT_TRIGGER';
+  if (isTrigger && EXCLUSION_CONSTRAINTS.includes(message)) {
+    return new ExclusionViolationError(message, { cause: err });
+  }
   const isUnique =
     err?.errcode === SQLITE_CONSTRAINT_UNIQUE ||
     err?.errcode === SQLITE_CONSTRAINT_PRIMARYKEY ||
@@ -62,6 +73,12 @@ function makeExecutor(conn) {
 
 /**
  * Implementação SQLite da interface Database (ver ./index.js).
+ *
+ * UMA conexão por processo (AF-11, R6): o driver é síncrono, e com duas conexões do adapter no
+ * mesmo processo o `busy_timeout` de uma bloquearia o event loop enquanto a outra precisa dele
+ * para terminar a transação (a espera só acabaria no timeout). Vários PROCESSOS no mesmo arquivo
+ * (WAL) funcionam: o `BEGIN IMMEDIATE` de um espera o do outro. Não abra outra instância desta
+ * classe sobre o mesmo arquivo dentro do processo.
  *
  * A conexão é única e o driver é síncrono, mas `transaction(fn)` aceita
  * callbacks assíncronos. Para que duas transações não se misturem na mesma

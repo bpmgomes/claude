@@ -2,6 +2,9 @@ import { Writable } from 'node:stream';
 import { buildApp } from '../../src/app.js';
 import { createMemoryStorage } from '../../src/storage/memory.js';
 
+/** Segredo fixo do token de conflitos (43 caracteres; AF-11, critério 36). */
+export const TEST_CONFLICTS_TOKEN_SECRET = 'teste-segredo-do-token-de-conflitos-af11-xy';
+
 /**
  * Monta um app isolado: banco :memory:, bcrypt custo 4, sem rate limit, logs capturados,
  * storage em memória e `publicBaseUrl` fixo.
@@ -23,6 +26,7 @@ export async function buildTestApp(overrides = {}) {
     logLevel: 'trace',
     logStream,
     publicBaseUrl: 'https://agendafacil.app',
+    conflictsTokenSecret: TEST_CONFLICTS_TOKEN_SECRET,
     ...overrides,
   };
   if (!('storage' in overrides)) options.storage = createMemoryStorage();

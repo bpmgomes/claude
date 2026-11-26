@@ -9,6 +9,7 @@ import {
   TIME_STEP_MINUTES,
   DAY_END_MINUTE,
   HOURS_MESSAGES,
+  OUTSIDE_HOURS_SCAN_MAX,
 } from '/shared/working-hours.js';
 import { requestJson, GENERIC_ERROR_MESSAGE } from './api.js';
 
@@ -175,6 +176,10 @@ export function errorsByInterval(fields) {
 export function affectedMessage(count) {
   if (!Number.isInteger(count) || count <= 0) return null;
   if (count === 1) return '1 agendamento futuro fica fora do novo horário. Ele continua marcado.';
+  // Teto da varredura (AF-11, decisão 16): o número é um limite inferior.
+  if (count >= OUTSIDE_HOURS_SCAN_MAX) {
+    return `Pelo menos ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, '.')} agendamentos futuros ficam fora do novo horário. Eles continuam marcados.`;
+  }
   return `${count} agendamentos futuros ficam fora do novo horário. Eles continuam marcados.`;
 }
 

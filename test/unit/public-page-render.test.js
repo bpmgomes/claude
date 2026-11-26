@@ -176,7 +176,7 @@ describe('ação de agendar e estado vazio (critérios 7, 8 e 15)', () => {
       ],
     );
     assert.equal((html.match(/>Ver horários<\/a>/g) || []).length, 2);
-    assert.match(html, /id="agendar-aviso">Veja os horários livres abaixo\. A confirmação online chega em breve; por enquanto, ligue para \(11\) 91234-5678\./);
+    assert.match(html, /id="agendar-aviso">Escolha um horário livre abaixo e confirme online\. Se preferir, ligue para \(11\) 91234-5678\./);
     assert.ok(tagsOf(html, 'a').some((a) => a.class === 'skip-link' && a.href === '#servicos'));
     assert.ok(tagsOf(html, 'section').some((s) => s.id === 'servicos'));
   });
@@ -214,17 +214,46 @@ describe('ação de agendar e estado vazio (critérios 7, 8 e 15)', () => {
     }
   });
 
-  test('Confirmar agendamento desabilitado, com aviso de que o horário não está reservado (critério 22)', () => {
+  test('Confirmar agendamento habilitado, sem os avisos de "em breve" (AF-11, critério 28)', () => {
     const html = renderPublicPage(page());
     const buttons = tagsOf(html, 'button');
     assert.equal(buttons.length, 1);
     assert.equal(buttons[0].class, 'pp-confirm-button');
-    assert.equal('disabled' in buttons[0], true);
-    assert.equal(buttons[0]['aria-describedby'], 'confirmar-aviso');
+    assert.equal('disabled' in buttons[0], false);
+    assert.equal('aria-describedby' in buttons[0], false);
     assert.equal(buttons[0].type, 'submit');
     assert.match(html, />Confirmar agendamento<\/button>/);
-    assert.match(html, /id="confirmar-aviso" class="pp-notice">A confirmação online chega em breve\. Este horário ainda não está reservado: para garantir, ligue para \(11\) 91234-5678\./);
+    assert.equal(html.includes('confirmar-aviso'), false);
+    const text = textOf(html).toLowerCase();
+    assert.equal(text.includes('chega em breve'), false);
+    assert.equal(text.includes('ainda não está reservado'), false);
     assert.ok(tagsOf(html, 'div').some((d) => d.class === 'pp-confirm' && 'hidden' in d));
+  });
+
+  test('alerta, sugestões e tela de sucesso vazios e ocultos (AF-11, critérios 18, 27 e 28)', () => {
+    const html = renderPublicPage(page());
+    const [alert] = tagsOf(html, 'div').filter((d) => d.class === 'pp-alert');
+    assert.equal(alert.role, 'alert');
+    assert.equal('hidden' in alert, true);
+    const [suggestions] = tagsOf(html, 'div').filter((d) => d.class === 'pp-suggestions');
+    assert.equal('hidden' in suggestions, true);
+    assert.ok(tagsOf(html, 'ul').some((u) => u.class === 'pp-suggestions-list'));
+    const [success] = tagsOf(html, 'section').filter((s) => s.class === 'pp-success');
+    assert.equal('hidden' in success, true);
+    assert.equal(success.tabindex, '-1');
+    assert.equal(success['aria-labelledby'], 'sucesso-titulo');
+    const [title] = tagsOf(html, 'h2').filter((h) => h.id === 'sucesso-titulo');
+    assert.equal(title.tabindex, '-1');
+    assert.ok(tagsOf(html, 'dl').some((d) => d.class === 'pp-success-details'));
+    assert.ok(tagsOf(html, 'a').some((a) => a.class === 'pp-success-phone-link' && a.href === 'tel:+5511912345678'));
+    const start = html.indexOf('<section class="pp-success"');
+    const successText = textOf(html.slice(start, html.indexOf('</section>', start))).toLowerCase();
+    assert.ok(successText.includes('agendamento confirmado'));
+    assert.equal(successText.includes('e-mail'), false);
+    assert.equal(successText.includes('cancelar online'), false);
+    // O alerta e as sugestões ficam antes do formulário, dentro de .pp-confirm.
+    const confirmAt = html.indexOf('<div class="pp-confirm" hidden>');
+    assert.ok(confirmAt < html.indexOf('class="pp-alert"') && html.indexOf('class="pp-alert"') < html.indexOf('<form'));
   });
 
   test('estado vazio: texto explicativo e link tel:', () => {
@@ -307,17 +336,15 @@ describe('passo "Seus dados" (AF-04, critérios 19, 21, 22 e 25)', () => {
     assert.doesNotMatch(html, /maxlength/i);
   });
 
-  test('botão submit desabilitado no formulário, com o aviso; texto sem promessa', () => {
+  test('botão submit habilitado no formulário; o formulário não promete reserva', () => {
     const html = renderPublicPage(page());
     const block = confirmBlock(html);
     const [button] = tagsOf(block, 'button');
     assert.equal(button.type, 'submit');
-    assert.equal('disabled' in button, true);
-    assert.equal(button['aria-describedby'], 'confirmar-aviso');
-    const text = textOf(html).toLowerCase();
+    assert.equal('disabled' in button, false);
+    const text = textOf(block).toLowerCase();
     assert.equal(text.includes('confirmado'), false);
     assert.equal(text.includes('reservado para você'), false);
-    assert.ok(textOf(block).includes('Este horário ainda não está reservado'));
   });
 
   test('aviso de privacidade com o nome do negócio (critério 21)', () => {

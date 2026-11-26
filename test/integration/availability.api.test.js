@@ -102,7 +102,8 @@ describe('GET /api/public/:slug/availability', () => {
       ],
     );
     const friday = body.days[1];
-    assert.deepEqual(friday.slots[0], { start: '2026-11-27T09:00', end: '2026-11-27T10:00', professionals: [0, 1] });
+    // Em "qualquer profissional", o horário não diz quem está livre (AF-11, decisão 4).
+    assert.deepEqual(friday.slots[0], { start: '2026-11-27T09:00', end: '2026-11-27T10:00' });
     assert.deepEqual(starts(body), [...range('09:00', '11:00'), ...range('13:00', '17:00')]);
     // Hoje às 09:00: antecedência de 1 h, primeiro início 10:00.
     assert.equal(body.days[0].slots[0].start, '2026-11-26T10:00');
@@ -110,14 +111,14 @@ describe('GET /api/public/:slug/availability', () => {
     assert.deepEqual(all, [...all].sort());
   });
 
-  test('específico e qualquer (critérios 2, 11 e 19): com bloqueio só de A, os horários em que só B está livre trazem só o índice de B', async () => {
+  test('específico e qualquer (critérios 2, 11 e 19; AF-11 critério 12): com bloqueio só de A, os horários em que só B está livre continuam em "qualquer", sem a chave professionals', async () => {
     const block = await postTimeBlock(app, ana, { professionalId: a.id, start: `${FRIDAY}T10:00`, end: `${FRIDAY}T11:00` });
     assert.equal(block.statusCode, 201, block.body);
     const any = await fetchDay();
-    const byStart = new Map(any.days[0].slots.map((s) => [s.start.slice(11), s.professionals]));
-    assert.deepEqual(byStart.get('09:00'), [0, 1]);
-    for (const t of range('09:15', '10:45')) assert.deepEqual(byStart.get(t), [1], t);
-    assert.deepEqual(byStart.get('11:00'), [0, 1]);
+    assert.deepEqual(any.professionals, [a.id, b.id]);
+    assert.ok(any.days[0].slots.every((s) => !('professionals' in s) && Object.keys(s).join() === 'start,end'));
+    const anyStarts = starts(any);
+    for (const t of ['09:00', ...range('09:15', '10:45'), '11:00']) assert.ok(anyStarts.includes(t), t);
 
     const onlyA = await fetchDay({ professionalId: a.id });
     assert.deepEqual(onlyA.professionals, [a.id]);
@@ -200,7 +201,7 @@ describe('GET /api/public/:slug/availability', () => {
     assert.equal((await getAvailability(app, 'nao-existe', {})).statusCode, 400);
   });
 
-  test('lista vazia (critério 5): serviço cujo único profissional apagou a grade dá 200 com professionals []', async () => {
+  test('serviço oculto (AF-11, decisão 5): serviço cujo único profissional apagou a grade dá 404 uniforme', async () => {
     const luzes = await createService(app, ana, { name: 'Luzes', durationMinutes: 90 });
     const cris = await createProfessional(app, ana, { name: 'Cris', serviceIds: [luzes.id] });
     assert.equal((await putHours(app, ana, cris.id, WEEK_9_TO_18)).statusCode, 200);
@@ -208,9 +209,14 @@ describe('GET /api/public/:slug/availability', () => {
     assert.deepEqual(body.professionals, [cris.id]);
     assert.ok(body.days[0].slots.length > 0);
     assert.equal((await putHours(app, ana, cris.id, EMPTY_WEEK)).statusCode, 200);
-    body = await fetchDay({ serviceId: luzes.id, to: '2026-11-29' });
-    assert.deepEqual(body.professionals, []);
-    assert.deepEqual(body.days.map((d) => d.slots.length), [0, 0, 0]);
+    for (const professionalId of ['any', cris.id]) {
+      const res = await getAvailability(app, SLUG, query({ serviceId: luzes.id, professionalId, to: '2026-11-29' }));
+      assert.equal(res.statusCode, 404, professionalId);
+      assert.deepEqual(res.json(), NOT_FOUND_BODY);
+    }
+    // Dia sem horário de quem tem elegíveis continua 200 com slots [].
+    body = await fetchDay({ from: '2026-11-28' });
+    assert.deepEqual(body.days[0].slots, []);
   });
 
   test('integração (critério 21): bloqueio, grade e remoção valem na próxima consulta, sem reinício', async () => {

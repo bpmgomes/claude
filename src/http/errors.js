@@ -99,6 +99,33 @@ export class TimeBlockConflictsError extends ConflictError {
   }
 }
 
+export const SLOT_UNAVAILABLE_MESSAGE = 'Este horário acabou de ser ocupado. Escolha outro.';
+
+/**
+ * O início pedido não está livre (AF-11, critério 15): agendamento, bloqueio, grade, antecedência
+ * ou sobreposição recusada pelo banco, sem diferenciar. `suggestions` (até 3 `{ start, end }`
+ * locais) é preenchido DEPOIS do rollback, fora da transação.
+ */
+export class SlotUnavailableError extends ConflictError {
+  /** @param {Array<{ start: string, end: string }>} [suggestions] */
+  constructor(suggestions = []) {
+    super('SLOT_UNAVAILABLE', SLOT_UNAVAILABLE_MESSAGE);
+    this.name = 'SlotUnavailableError';
+    this.suggestions = Array.isArray(suggestions) ? suggestions : [];
+  }
+}
+
+export const IDEMPOTENCY_KEY_REUSED_MESSAGE =
+  'Esta tentativa já foi usada com outros dados. Recarregue a página e tente de novo.';
+
+/** `Idempotency-Key` já usada neste negócio com outro corpo (AF-11, critério 25). */
+export class IdempotencyKeyReusedError extends AppError {
+  constructor() {
+    super(422, 'IDEMPOTENCY_KEY_REUSED', IDEMPOTENCY_KEY_REUSED_MESSAGE);
+    this.name = 'IdempotencyKeyReusedError';
+  }
+}
+
 /** Dependência indisponível (ex.: porta de agendamentos, CONFLICTS_UNAVAILABLE). Nada foi gravado. */
 export class ServiceUnavailableError extends AppError {
   constructor(code, message) {
@@ -150,7 +177,23 @@ export class LoginLockedError extends AppError {
 
 const GENERIC_500 = 'Erro inesperado. Tente novamente.';
 
-function body(code, message, fields, retryAfterSeconds, suggestion, futureAppointmentsCount, conflictInfo = {}) {
+/** Cada sugestão reduzida a `{ start, end }` string (nada interno sai, critério 17 do AF-11). */
+function cleanSuggestions(list) {
+  return list
+    .filter((s) => s && typeof s.start === 'string' && typeof s.end === 'string')
+    .map((s) => ({ start: s.start, end: s.end }));
+}
+
+function body(
+  code,
+  message,
+  fields,
+  retryAfterSeconds,
+  suggestion,
+  futureAppointmentsCount,
+  conflictInfo = {},
+  suggestions = undefined,
+) {
   const error = { code, message };
   if (fields && Object.keys(fields).length > 0) error.fields = fields;
   if (retryAfterSeconds !== undefined) error.retryAfterSeconds = retryAfterSeconds;
@@ -162,6 +205,7 @@ function body(code, message, fields, retryAfterSeconds, suggestion, futureAppoin
   if (Number.isInteger(conflictsTotal) && conflictsTotal >= 0) error.conflictsTotal = conflictsTotal;
   if (Array.isArray(conflicts)) error.conflicts = conflicts;
   if (typeof conflictsToken === 'string') error.conflictsToken = conflictsToken;
+  if (Array.isArray(suggestions)) error.suggestions = cleanSuggestions(suggestions);
   return { error };
 }
 
@@ -190,6 +234,7 @@ export function errorHandler(error, request, reply) {
             conflictsTotal: error.conflictsTotal,
             conflictsToken: error.conflictsToken,
           },
+          error.suggestions,
         ),
       );
   }

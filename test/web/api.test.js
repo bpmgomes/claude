@@ -35,3 +35,32 @@ test('com corpo e omit: JSON e Content-Type continuam', async () => {
   assert.equal(init.headers['Content-Type'], 'application/json');
   assert.equal(init.body, '{"a":1}');
 });
+
+test('requestJson repassa headers (Idempotency-Key do AF-11) depois de Accept e Content-Type', async () => {
+  const fetchFn = fakeFetch();
+  await requestJson('/api/x', {
+    method: 'POST',
+    body: { a: 1 },
+    fetchFn,
+    credentials: 'omit',
+    headers: { 'Idempotency-Key': '3b241101-e2bb-4255-8caf-4136c566a962' },
+  });
+  const { init } = fetchFn.calls[0];
+  assert.equal(init.headers['Idempotency-Key'], '3b241101-e2bb-4255-8caf-4136c566a962');
+  assert.equal(init.headers.Accept, 'application/json');
+  assert.equal(init.headers['Content-Type'], 'application/json');
+});
+
+test('requestJson não copia valor não string (Content-Type continua JSON)', async () => {
+  const fetchFn = fakeFetch();
+  await requestJson('/api/x', {
+    method: 'POST',
+    body: {},
+    fetchFn,
+    headers: { 'Content-Type': 42, 'X-Obj': { a: 1 }, 'X-Null': null },
+  });
+  const { headers } = fetchFn.calls[0].init;
+  assert.equal(headers['Content-Type'], 'application/json');
+  assert.equal('X-Obj' in headers, false);
+  assert.equal('X-Null' in headers, false);
+});

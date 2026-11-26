@@ -208,6 +208,14 @@ describe('errorsByInterval e affectedMessage', () => {
     assert.equal(affectedMessage(3), '3 agendamentos futuros ficam fora do novo horário. Eles continuam marcados.');
   });
 
+  test('affectedMessage no teto da varredura (AF-11, decisão 16): "pelo menos 1.000"', () => {
+    assert.equal(
+      affectedMessage(1000),
+      'Pelo menos 1.000 agendamentos futuros ficam fora do novo horário. Eles continuam marcados.',
+    );
+    assert.equal(affectedMessage(999), '999 agendamentos futuros ficam fora do novo horário. Eles continuam marcados.');
+  });
+
   test('estado vazio explica que o profissional não aparece para clientes (critério 25)', () => {
     assert.match(EMPTY_HOURS_MESSAGE, /não aparecerá para os clientes/);
   });

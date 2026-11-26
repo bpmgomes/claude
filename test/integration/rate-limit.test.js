@@ -69,6 +69,7 @@ function businessLimits({
   publicAvailability,
   malformedUrl,
   publicMedia,
+  publicBooking,
 } = {}) {
   return {
     enabled: true,
@@ -85,6 +86,7 @@ function businessLimits({
     publicAvailability: publicAvailability || { perIp: 100 },
     malformedUrl: malformedUrl || { perIp: 100 },
     publicMedia: publicMedia || { perIp: 100 },
+    publicBooking: publicBooking || { perIp: 100 },
   };
 }
 
@@ -922,5 +924,59 @@ test('AF-04: nenhuma rota registrada contém "customers" (sem gravação públic
     assert.doesNotMatch(routes, /customer/i);
   } finally {
     await app.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AF-11 (critério 41): teto publicBooking e contador compartilhado publicPage no POST público.
+// ---------------------------------------------------------------------------
+
+const { bookingBody, postAppointment } = await import('../helpers/appointments.js');
+
+function bookingRequest(app, seed, i, remoteAddress = '10.1.1.1') {
+  return postAppointment(
+    app,
+    seed.slug,
+    bookingBody({
+      serviceId: seed.services[0].id,
+      professionalId: seed.professionals[0].id,
+      start: `2026-11-27T${['09:00', '10:00', '11:00', '13:00', '14:00', '15:00'][i]}`,
+      customer: { phone: `(11) 9765${i}-321${i}` },
+    }),
+    { remoteAddress },
+  );
+}
+
+test('publicBooking.perIp 2: o 3º POST dá 429 com retry-after e no-store; horários e página continuam 200; outro IP passa', async () => {
+  const { app, seed } = await availabilityApp({ publicPage: { perIp: 100 }, publicBooking: { perIp: 2 } });
+  try {
+    assert.equal((await bookingRequest(app, seed, 0)).statusCode, 201);
+    assert.equal((await bookingRequest(app, seed, 1)).statusCode, 201);
+    assertRateLimitedJson(await bookingRequest(app, seed, 2));
+    assert.equal((await getAvailability(app, seed.slug, availabilityQuery(seed), { remoteAddress: '10.1.1.1' })).statusCode, 200);
+    assert.equal((await visit(app, `/${seed.slug}`)).statusCode, 200);
+    assert.equal((await bookingRequest(app, seed, 3, '10.1.1.2')).statusCode, 201);
+  } finally {
+    await app.close();
+  }
+});
+
+test('contador compartilhado: com publicPage.perIp 3, 2 páginas e 1 POST esgotam o contador e o 4º (qualquer rota) dá 429', async () => {
+  for (const fourth of ['page', 'post']) {
+    const { app, seed } = await availabilityApp({ publicPage: { perIp: 3 }, publicBooking: { perIp: 100 } });
+    try {
+      assert.equal((await visit(app, `/${seed.slug}`)).statusCode, 200);
+      assert.equal((await visit(app, `/${seed.slug}`)).statusCode, 200);
+      const first = await bookingRequest(app, seed, 0);
+      assert.equal(first.statusCode, 201, first.body);
+      // O teto não sobrescreve os cabeçalhos do contador compartilhado (o POST conta uma vez).
+      assert.equal(first.headers['x-ratelimit-limit'], '3');
+      assert.equal(first.headers['x-ratelimit-remaining'], '0');
+      if (fourth === 'page') assertRateLimitedHtml(await visit(app, `/${seed.slug}`));
+      else assertRateLimitedJson(await bookingRequest(app, seed, 1));
+      assert.equal((await bookingRequest(app, seed, 2, '10.1.1.2')).statusCode, 201);
+    } finally {
+      await app.close();
+    }
   }
 });

@@ -15,6 +15,13 @@ const {
   selectedSummary,
   emptyDayMessage,
   readyMessage,
+  appointmentsUrl,
+  confirmBooking,
+  createAttemptKeys,
+  successDetails,
+  safePhoneHref,
+  suggestionLabel,
+  isoWeekdayOfDate,
   BOOKING_MESSAGES: B,
 } = await import('../../web/js/public-booking-controller.js');
 const { AVAILABILITY_MESSAGES: M } = await import('../../src/shared/availability.js');
@@ -77,7 +84,7 @@ describe('availabilityUrl', () => {
 });
 
 describe('loadAvailability (critérios 28 e 29)', () => {
-  test('200: rótulos HH:MM, ids dos profissionais, fim 24:00 no dia seguinte, fuso e agora do servidor', async () => {
+  test('200: rótulos HH:MM, fim 24:00 no dia seguinte, fuso e agora do servidor (sem ids por horário, AF-11)', async () => {
     const fetchFn = fakeFetch(200, OK_BODY);
     const result = await loadAvailability('salao-da-ana', SELECTION, { fetchFn });
     assert.equal(fetchFn.calls[0].url, availabilityUrl('salao-da-ana', SELECTION));
@@ -90,14 +97,24 @@ describe('loadAvailability (critérios 28 e 29)', () => {
         date: '2026-11-27',
         weekday: 5,
         slots: [
-          { label: '09:00', endLabel: '10:00', start: '2026-11-27T09:00', end: '2026-11-27T10:00', professionalIds: [P, Q] },
-          { label: '23:00', endLabel: '24:00', start: '2026-11-27T23:00', end: '2026-11-28T00:00', professionalIds: [Q] },
+          { label: '09:00', endLabel: '10:00', start: '2026-11-27T09:00', end: '2026-11-27T10:00' },
+          { label: '23:00', endLabel: '24:00', start: '2026-11-27T23:00', end: '2026-11-28T00:00' },
         ],
       },
       timezone: 'America/Sao_Paulo',
       now: '2026-11-26T09:00',
       anyEligible: true,
     });
+  });
+
+  test('aceita horários sem `professionals` (contrato de "qualquer" do AF-11)', async () => {
+    const body = {
+      ...OK_BODY,
+      days: [{ date: '2026-11-27', weekday: 5, slots: [{ start: '2026-11-27T09:00', end: '2026-11-27T10:00' }] }],
+    };
+    const result = await loadAvailability('s', SELECTION, { fetchFn: fakeFetch(200, body) });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.day.slots, [{ label: '09:00', endLabel: '10:00', start: '2026-11-27T09:00', end: '2026-11-27T10:00' }]);
   });
 
   test('200 sem elegíveis: anyEligible false', async () => {
@@ -248,6 +265,179 @@ describe('seleção e textos', () => {
   });
 });
 
+const PAYLOAD = Object.freeze({
+  serviceId: S,
+  professionalId: 'any',
+  start: '2026-11-27T10:00',
+  customer: { name: 'Ana Souza', phone: '(11) 91234-5678', email: 'ana@example.com' },
+});
+const APPOINTMENT = Object.freeze({
+  start: '2026-11-27T10:00',
+  end: '2026-11-27T11:00',
+  weekday: 5,
+  timezone: 'America/Sao_Paulo',
+  service: { name: 'Corte', durationMinutes: 60, durationLabel: '1 h', priceCents: 5000, priceOnRequest: false, priceLabel: 'R$ 50,00' },
+  professional: { name: 'Bia Lima' },
+  business: { name: 'Salão da Ana', address: 'Rua A, 10', phoneDisplay: '(11) 91234-5678', phoneHref: 'tel:+5511912345678' },
+});
+const errorBody = (code, message, extra = {}) => ({ error: { code, message, ...extra } });
+
+describe('confirmBooking (AF-11, critérios 25 e 29 a 30)', () => {
+  test("POST para /api/public/<slug>/appointments com credentials: 'omit' e Idempotency-Key", async () => {
+    const fetchFn = fakeFetch(201, { appointment: APPOINTMENT });
+    const key = '3b241101-e2bb-4255-8caf-4136c566a962';
+    const result = await confirmBooking('salao-da-ana', PAYLOAD, { fetchFn, idempotencyKey: key });
+    assert.deepEqual(result, { ok: true, appointment: APPOINTMENT });
+    const { url, init } = fetchFn.calls[0];
+    assert.equal(url, '/api/public/salao-da-ana/appointments');
+    assert.equal(appointmentsUrl('a/b'), '/api/public/a%2Fb/appointments');
+    assert.equal(init.method, 'POST');
+    assert.equal(init.credentials, 'omit');
+    assert.equal(init.headers['Idempotency-Key'], key);
+    assert.equal(init.headers['Content-Type'], 'application/json');
+    assert.deepEqual(JSON.parse(init.body), PAYLOAD);
+  });
+
+  test('sem idempotencyKey, nenhum cabeçalho Idempotency-Key', async () => {
+    const fetchFn = fakeFetch(201, { appointment: APPOINTMENT });
+    await confirmBooking('s', PAYLOAD, { fetchFn });
+    assert.equal('Idempotency-Key' in fetchFn.calls[0].init.headers, false);
+  });
+
+  test('400 por campo do cliente: kind fields com name/phone/email (sem chaves estranhas)', async () => {
+    const fields = { phone: 'Informe um celular...', __proto__: { x: 1 }, foo: 'bar' };
+    const result = await confirmBooking('s', PAYLOAD, {
+      fetchFn: fakeFetch(400, errorBody('VALIDATION_ERROR', 'Verifique os campos destacados.', { fields: { name: 'n', ...fields } })),
+    });
+    assert.deepEqual(result, { ok: false, kind: 'fields', fields: { name: 'n', phone: 'Informe um celular...' }, otherFields: false, message: B.checkFields });
+  });
+
+  test('400 em start (ou serviceId/professionalId): fieldsElsewhere', async () => {
+    const result = await confirmBooking('s', PAYLOAD, {
+      fetchFn: fakeFetch(400, errorBody('VALIDATION_ERROR', 'x', { fields: { start: 'Escolha um horário.' } })),
+    });
+    assert.deepEqual(result, { ok: false, kind: 'fields', fields: {}, otherFields: true, message: B.fieldsElsewhere });
+  });
+
+  test('409 SLOT_UNAVAILABLE com sugestões: rótulos, dia só quando muda, no máximo 3 e só válidas', async () => {
+    const suggestions = [
+      { start: '2026-11-27T10:15', end: '2026-11-27T11:15', extra: 'x' },
+      { start: 'lixo', end: '2026-11-27T11:30' },
+      { start: '2026-11-30T09:00', end: '2026-11-30T10:00' },
+      { start: '2026-11-30T09:15', end: '2026-11-30T10:15' },
+      { start: '2026-11-30T09:30', end: '2026-11-30T10:30' },
+    ];
+    const result = await confirmBooking('s', PAYLOAD, {
+      fetchFn: fakeFetch(409, errorBody('SLOT_UNAVAILABLE', 'Este horário acabou de ser ocupado. Escolha outro.', { suggestions })),
+    });
+    assert.equal(result.kind, 'slot');
+    assert.equal(result.message, 'Este horário acabou de ser ocupado. Escolha outro.');
+    assert.deepEqual(result.suggestions, [
+      { start: '2026-11-27T10:15', end: '2026-11-27T11:15', label: '10:15' },
+      { start: '2026-11-30T09:00', end: '2026-11-30T10:00', label: '09:00', dateLabel: 'seg, 30/11' },
+      { start: '2026-11-30T09:15', end: '2026-11-30T10:15', label: '09:15', dateLabel: 'seg, 30/11' },
+    ]);
+    assert.equal(suggestionLabel(result.suggestions[0]), '10:15');
+    assert.equal(suggestionLabel(result.suggestions[1]), 'seg, 30/11 · 09:00');
+  });
+
+  test('409 sem sugestões, e mensagem que não é string: fixa local', async () => {
+    const result = await confirmBooking('s', PAYLOAD, { fetchFn: fakeFetch(409, errorBody('SLOT_UNAVAILABLE', 42)) });
+    assert.deepEqual(result, { ok: false, kind: 'slot', message: B.slotTaken, suggestions: [] });
+  });
+
+  test('409 BOOKING_LIMIT_REACHED, 404, 422, 429, 503, rede e corpo malformado', async () => {
+    const cases = [
+      [409, errorBody('BOOKING_LIMIT_REACHED', 'msg do servidor'), { kind: 'limit', message: 'msg do servidor' }],
+      [409, errorBody('OUTRO', 'x'), { kind: 'unavailable', message: B.bookingUnavailable }],
+      [404, errorBody('NOT_FOUND', 'x'), { kind: 'notFound', message: B.bookingNotFound }],
+      [422, errorBody('IDEMPOTENCY_KEY_REUSED', 'Esta tentativa já foi usada.'), { kind: 'reused', message: 'Esta tentativa já foi usada.' }],
+      [429, errorBody('RATE_LIMITED', 'x'), { kind: 'rateLimited', message: B.bookingRateLimited }],
+      [503, errorBody('BOOKING_UNAVAILABLE', 'x'), { kind: 'unavailable', message: B.bookingUnavailable }],
+      [500, undefined, { kind: 'unavailable', message: B.bookingUnavailable }],
+      [201, { nada: true }, { kind: 'unavailable', message: B.bookingUnavailable }],
+      [400, errorBody('VALIDATION_ERROR', 'Requisição inválida.'), { kind: 'unavailable', message: B.bookingUnavailable }],
+    ];
+    for (const [status, body, expected] of cases) {
+      assert.deepEqual(await confirmBooking('s', PAYLOAD, { fetchFn: fakeFetch(status, body) }), { ok: false, ...expected }, String(status));
+    }
+    const network = await confirmBooking('s', PAYLOAD, {
+      fetchFn: async () => {
+        throw new TypeError('Failed to fetch');
+      },
+    });
+    assert.deepEqual(network, { ok: false, kind: 'network', message: B.bookingUnavailable });
+  });
+});
+
+describe('createAttemptKeys, successDetails e safePhoneHref (AF-11)', () => {
+  test('a mesma chave para o mesmo conteúdo; outra quando muda ou depois de reset', () => {
+    let n = 0;
+    const keys = createAttemptKeys(() => `k${++n}`);
+    assert.equal(keys.keyFor(PAYLOAD), 'k1');
+    assert.equal(keys.keyFor({ ...PAYLOAD }), 'k1');
+    assert.equal(keys.keyFor({ ...PAYLOAD, start: '2026-11-27T10:15' }), 'k2');
+    keys.reset();
+    assert.equal(keys.keyFor({ ...PAYLOAD, start: '2026-11-27T10:15' }), 'k3');
+  });
+
+  test('successDetails monta os rótulos sem relógio (o mesmo resultado com TZ diferente)', () => {
+    const original = process.env.TZ;
+    const results = [];
+    try {
+      for (const tz of ['UTC', 'Asia/Tokyo', 'America/Sao_Paulo']) {
+        process.env.TZ = tz;
+        results.push(successDetails(APPOINTMENT));
+      }
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
+    assert.deepEqual(results[0], [
+      { label: 'Data', value: 'sex, 27/11/2026' },
+      { label: 'Horário', value: '10:00 – 11:00 (America/Sao_Paulo)' },
+      { label: 'Serviço', value: 'Corte · 1 h · R$ 50,00' },
+      { label: 'Profissional', value: 'Bia Lima' },
+      { label: 'Endereço', value: 'Rua A, 10' },
+    ]);
+    assert.deepEqual(results[1], results[0]);
+    assert.deepEqual(results[2], results[0]);
+  });
+
+  test('successDetails com "Sob consulta", fim 24:00 e valores não string', () => {
+    const rows = successDetails({
+      ...APPOINTMENT,
+      start: '2026-11-27T23:00',
+      end: '2026-11-28T00:00',
+      service: { name: 'Luzes', durationLabel: '1 h', priceLabel: 'Sob consulta' },
+      professional: { name: 42 },
+      business: null,
+    });
+    assert.equal(rows[1].value, '23:00 – 24:00 (America/Sao_Paulo)');
+    assert.equal(rows[2].value, 'Luzes · 1 h · Sob consulta');
+    assert.equal(rows[3].value, '');
+    assert.equal(rows[4].value, '');
+    assert.deepEqual(successDetails(null).map((r) => r.value), ['', '', '', '', '']);
+  });
+
+  test('isoWeekdayOfDate por aritmética: 2026-11-27 é sexta, 2026-11-29 é domingo, 2024-02-29 é quinta', () => {
+    assert.equal(isoWeekdayOfDate('2026-11-27'), 5);
+    assert.equal(isoWeekdayOfDate('2026-11-29'), 7);
+    assert.equal(isoWeekdayOfDate('2026-11-30'), 1);
+    assert.equal(isoWeekdayOfDate('2024-02-29'), 4);
+    assert.equal(isoWeekdayOfDate('2027-01-01'), 5);
+    assert.equal(isoWeekdayOfDate('lixo'), 0);
+  });
+
+  test('safePhoneHref recusa javascript: e tel: sem +55', () => {
+    assert.equal(safePhoneHref('tel:+5511912345678'), 'tel:+5511912345678');
+    assert.equal(safePhoneHref('tel:+551132345678'), 'tel:+551132345678');
+    for (const bad of ['javascript:alert(1)', 'tel:11912345678', 'tel:+1555123456', 'tel:+5511912345678x', 42, null]) {
+      assert.equal(safePhoneHref(bad), null, String(bad));
+    }
+  });
+});
+
 describe('sem relógio do navegador (critérios 12 e 18)', () => {
   test('public-booking-controller.js e public-booking-page.js não usam Date', async () => {
     for (const file of ['public-booking-controller.js', 'public-booking-page.js']) {
@@ -291,7 +481,7 @@ describe('JS público sem cookie e sem armazenamento (AF-04, critério 16)', () 
     }
   });
 
-  test('o passo "Seus dados" não faz chamada de rede no AF-04', async () => {
+  test('o controlador do passo "Seus dados" não faz chamada de rede (o POST do AF-11 fica em public-booking-controller.js)', async () => {
     for (const file of ['customer-form-controller.js']) {
       const src = await readFile(`${WEB_JS}${file}`, 'utf8');
       assert.doesNotMatch(src, /\brequestJson\(|\bfetch\(|XMLHttpRequest|sendBeacon|\/api\.js'/, file);

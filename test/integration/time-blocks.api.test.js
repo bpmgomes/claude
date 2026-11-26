@@ -1,7 +1,7 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { buildTestApp } from '../helpers/test-app.js';
+import { buildTestApp, TEST_CONFLICTS_TOKEN_SECRET } from '../helpers/test-app.js';
 import { createClock } from '../helpers/clock.js';
 import {
   signupAndLogin,
@@ -351,6 +351,7 @@ describe('conflitos pela API (critérios 9 a 11)', () => {
       professionalsRepository: app.services.professionalsRepository,
       businessesRepository: app.services.businessesRepository,
       appointments: port,
+      conflictsTokenSecret: TEST_CONFLICTS_TOKEN_SECRET,
       now: clock.now,
     });
   }
@@ -359,7 +360,7 @@ describe('conflitos pela API (critérios 9 a 11)', () => {
     swapService({
       findConflictsForBlock: async () => ({
         total: 1,
-        versionKey: 'v1',
+        versionKey: 'v'.repeat(43),
         items: [
           {
             id: randomUUID(),
@@ -382,7 +383,9 @@ describe('conflitos pela API (critérios 9 a 11)', () => {
     assert.deepEqual(error.conflicts, [
       { start: '2026-12-24T14:30', end: '2026-12-24T15:00', serviceName: 'Corte', professionalName: 'Ana Souza', customerName: 'Bia' },
     ]);
-    assert.equal(error.conflictsToken.length, 43);
+    // Token HMAC do AF-11 (critério 36): 'v1.<exp>.<mac>', 57 caracteres.
+    assert.equal(error.conflictsToken.length, 57);
+    assert.match(error.conflictsToken, /^v1\.\d{10}\.[A-Za-z0-9_-]{43}$/);
     assert.equal(await countBlocks(), 0);
 
     const second = await postTimeBlock(app, ana, block({ confirmConflictsToken: error.conflictsToken }));

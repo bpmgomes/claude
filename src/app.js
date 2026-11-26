@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
-import { loadConfig, mergeConfig } from './config.js';
+import { loadConfig, mergeConfig, resolveConflictsTokenSecret } from './config.js';
 import { errorHandler, RateLimitedError } from './http/errors.js';
 import { createSecurityHeaders, SECURITY_HEADERS_PROBE_URL } from './http/security-headers.js';
 import { createDatabase } from './db/index.js';
@@ -49,6 +49,11 @@ import { createAvailabilityService } from './modules/availability/availability.s
 import availabilityRoutes from './modules/availability/availability.routes.js';
 import { createCustomersRepository } from './modules/customers/customers.repository.js';
 import { createCustomersService } from './modules/customers/customers.service.js';
+import { createAppointmentsRepository } from './modules/appointments/appointments.repository.js';
+import { createAppointmentsPort } from './modules/appointments/appointments-port.js';
+import { createAppointmentsService } from './modules/appointments/appointments.service.js';
+import { noAppointmentEvents } from './modules/appointments/appointment-events-port.js';
+import appointmentsRoutes from './modules/appointments/appointments.routes.js';
 import { createImageLimiter } from './images/image-limiter.js';
 import { createStorage } from './storage/index.js';
 
@@ -92,6 +97,11 @@ export const REDACT_PATHS = [
   '*.customer',
   '*.*.customer',
   '*.*.*.customer',
+  // AF-04 item 1 (critério 38 do AF-11): snapshot, entrada e campos pessoais em até 4 níveis. O
+  // @pinojs/redact não aceita curinga no meio de uma chave (`customer_*`): a lista é explícita.
+  // Consequência: logs não usam `name` para identificar erros (usam `errCode`/`errName`).
+  ...['snapshot', 'input', 'name', 'phone', 'email', 'customer_name', 'customer_phone', 'customerName', 'customerPhone']
+    .flatMap((key) => [key, `*.${key}`, `*.*.${key}`, `*.*.*.${key}`]),
 ];
 
 /** Páginas HTML servidas pelo app. Todo caminho aqui precisa estar em RESERVED_SLUGS (teste). */
@@ -111,11 +121,20 @@ export const PAGES = Object.freeze({
  *   `now` (relógio `() => Date`, padrão `() => new Date()`, repassado a todos os serviços)
  *   `storage` (instância de `Storage`; padrão: disco local em `config.uploadsDir`) e
  *   `imageLimiter` (instância pronta de `createImageLimiter`; padrão: criada com
- *   `config.imageProcessing`, dividida entre logo e foto)
+ *   `config.imageProcessing`, dividida entre logo e foto) e `appointmentEvents` (porta de eventos
+ *   pós-commit do AF-11; padrão: `noAppointmentEvents`)
+ * @throws {Error} sem `CONFLICTS_TOKEN_SECRET` fora de development/test, ou com valor curto
  * @returns {Promise<import('fastify').FastifyInstance>}
  */
 export async function buildApp(overrides = {}) {
-  const config = mergeConfig(loadConfig(), overrides);
+  const fullConfig = mergeConfig(loadConfig(), overrides);
+  // O segredo do token de conflitos fica só aqui e no timeBlocksService (nunca em app.config nem
+  // em log). Lança fora de development/test sem CONFLICTS_TOKEN_SECRET (AF-11, critério 36).
+  const { secret: conflictsTokenSecret, generated: conflictsTokenSecretGenerated } =
+    resolveConflictsTokenSecret(fullConfig);
+  // eslint-disable-next-line no-unused-vars
+  const { conflictsTokenSecret: _secret, ...publicConfig } = fullConfig;
+  const config = Object.freeze(publicConfig);
   const now = overrides.now || (() => new Date());
 
   const logger = {
@@ -162,6 +181,7 @@ export async function buildApp(overrides = {}) {
   }
 
   // Preenchidos depois do registro do @fastify/rate-limit (null sem rate limit).
+  if (conflictsTokenSecretGenerated) app.log.warn({ event: 'conflicts_token_secret_generated' });
   let publicReadLimiter = null;
   let malformedUrlLimiter = null;
   const securityHeaders = createSecurityHeaders();
@@ -193,43 +213,47 @@ export async function buildApp(overrides = {}) {
     now,
     log: app.log,
   });
+  // Porta de agendamentos real (AF-11, critério 31): passada a todos os consumidores.
+  const workingHoursRepository = createWorkingHoursRepository(db);
+  const appointmentsRepository = createAppointmentsRepository(db);
+  const appointments = createAppointmentsPort({ appointmentsRepository, workingHoursRepository });
   const servicesRepository = createServicesRepository(db);
-  // Sem `appointments`: usa a porta nula (noAppointments) até o AF-11.
   const servicesService = createServicesService({
     db,
     servicesRepository,
     businessesRepository,
+    appointments,
     now,
     log: app.log,
   });
   const professionalsRepository = createProfessionalsRepository(db);
-  // Sem `appointments`: usa a porta nula (noAppointments) até o AF-11.
   const professionalsService = createProfessionalsService({
     db,
     professionalsRepository,
     businessesRepository,
+    appointments,
     storage,
     imageLimiter,
     now,
     log: app.log,
   });
-  const workingHoursRepository = createWorkingHoursRepository(db);
-  // Sem `appointments`: usa a porta nula (noAppointments) até o AF-11.
   const workingHoursService = createWorkingHoursService({
     db,
     workingHoursRepository,
     professionalsRepository,
     businessesRepository,
+    appointments,
     now,
     log: app.log,
   });
   const timeBlocksRepository = createTimeBlocksRepository(db);
-  // Sem `appointments`: usa a porta nula (noAppointments) até o AF-11.
   const timeBlocksService = createTimeBlocksService({
     db,
     timeBlocksRepository,
     professionalsRepository,
     businessesRepository,
+    appointments,
+    conflictsTokenSecret,
     now,
     log: app.log,
   });
@@ -242,19 +266,37 @@ export async function buildApp(overrides = {}) {
     config,
     now,
   });
-  // Sem `appointments`: usa a porta nula (noAppointments, findBusyByBusiness vazio) até o AF-11.
   const availabilityService = createAvailabilityService({
     businessesRepository,
     servicesRepository,
     professionalsRepository,
     workingHoursRepository,
     timeBlocksRepository,
+    appointments,
     now,
     log: app.log,
   });
   // Porta customers (AF-04): sem rota própria; só o AF-11 (e o AF-15) chama, com a transação dele.
   const customersRepository = createCustomersRepository(db);
   const customersService = createCustomersService({ customersRepository, now });
+  // Reserva pública (AF-11). Eventos pós-commit pela porta injetável (nula por padrão).
+  const appointmentsService = createAppointmentsService({
+    db,
+    businessesRepository,
+    servicesRepository,
+    professionalsRepository,
+    workingHoursRepository,
+    timeBlocksRepository,
+    appointmentsRepository,
+    appointments,
+    customersService,
+    availabilityService,
+    appointmentEvents: overrides.appointmentEvents ?? noAppointmentEvents,
+    now,
+    log: app.log,
+  });
+  // Idempotency-Key expiradas (24 h) saem no boot; uma falha não impede a subida.
+  await appointmentsService.purgeExpiredIdempotencyKeys();
   const authService = createAuthService({
     db,
     usersRepository,
@@ -288,6 +330,9 @@ export async function buildApp(overrides = {}) {
     availabilityService,
     customersRepository,
     customersService,
+    appointmentsRepository,
+    appointments,
+    appointmentsService,
     imageLimiter,
   });
 
@@ -384,6 +429,7 @@ export async function buildApp(overrides = {}) {
   await app.register(timeBlocksRoutes);
   // Antes de publicPageRoutes (rota estática /api/public/... tem prioridade sobre `/:slug`).
   await app.register(availabilityRoutes);
+  await app.register(appointmentsRoutes);
   // Por último: `/:slug` só casa o que nenhuma rota estática casou.
   await app.register(publicPageRoutes);
 

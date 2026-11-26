@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildApp } from '../../src/app.js';
 import { createMemoryStorage } from '../../src/storage/memory.js';
+import { TEST_CONFLICTS_TOKEN_SECRET } from '../helpers/test-app.js';
 
 /**
  * Sobe o app com banco em diretório temporário, storage em memória, cookie sem Secure e rate
@@ -28,6 +29,7 @@ export async function startServer({ seed, now, overrides = {} } = {}) {
     bcryptCost: 4,
     logLevel: 'warn',
     publicBaseUrl: 'http://127.0.0.1',
+    conflictsTokenSecret: TEST_CONFLICTS_TOKEN_SECRET,
     ...clock,
     ...overrides,
   });

@@ -202,6 +202,20 @@ export function createServicesRepository(db) {
       return rows.map(fromRow);
     },
 
+    /**
+     * Trava da linha do serviço ativo para a reserva (AF-11, 4.3): UPDATE sem efeito que, no
+     * PostgreSQL, trava a linha até o fim da transação e serializa contra `setActive` (AF-06).
+     * Ordem global de travas: businesses -> services -> professionals (por id).
+     * `changes === 0`: desativado (ou de outro negócio) entre a pré-checagem e a trava (404).
+     * @returns {Promise<{ changes: number }>}
+     */
+    async lockBookable(id, businessId, conn = db) {
+      return conn.run('UPDATE services SET updated_at = updated_at WHERE id = ? AND business_id = ? AND active = 1', [
+        id,
+        businessId,
+      ]);
+    },
+
     /** @returns {Promise<Service|undefined>} só se ativo; sob consulta incluído (decisão 5) */
     async findBookable(businessId, id, conn = db) {
       return fromRow(

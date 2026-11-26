@@ -1,17 +1,27 @@
 import { performance } from 'node:perf_hooks';
 import { parsePublicSlug } from '../../shared/slug.js';
 import { DEFAULT_TIME_ZONE } from '../../shared/time-blocks.js';
-import { instantToLocal, localToInstant, parseLocalDate, addLocalDays } from '../../shared/zoned-time.js';
+import {
+  instantToLocal,
+  localToInstant,
+  parseLocalDate,
+  parseLocalDateTime,
+  addLocalDays,
+} from '../../shared/zoned-time.js';
 import {
   validateAvailabilityQuery,
   ANY_PROFESSIONAL,
   MIN_LEAD_MINUTES,
   SLOT_STEP_MINUTES,
+  BOOKING_HORIZON_DAYS,
   AVAILABILITY_MESSAGES as M,
 } from '../../shared/availability.js';
+import { BOOKING_SUGGESTIONS_MAX, BOOKING_SUGGESTIONS_DAYS } from '../../shared/appointments.js';
 import { NotFoundError, ValidationError, ServiceUnavailableError } from '../../http/errors.js';
 import { noAppointments } from '../appointments/appointments-port.js';
 import { computeAvailability } from './availability-engine.js';
+import { resolveBookable } from './bookable.js';
+import { readLayers, BusyUnavailableError } from './availability-layers.js';
 
 const noopLog = { info() {}, warn() {}, error() {} };
 const MINUTE_MS = 60_000;
@@ -22,19 +32,16 @@ export const AVAILABILITY_SLOW_MS = 200;
  * @typedef {{
  *   timezone: string, now: string, from: string, to: string, durationMinutes: number, stepMinutes: number,
  *   professionals: string[],
- *   days: Array<{ date: string, weekday: number, slots: Array<{ start: string, end: string, professionals: number[] }> }>,
+ *   days: Array<{ date: string, weekday: number, slots: Array<{ start: string, end: string, professionals?: number[] }> }>,
  *   truncated: boolean,
  * }} AvailabilityResponse
  */
 
-/** 00:00 local da data, em ISO UTC de 24 caracteres. */
-function midnightIso(date, timeZone) {
+/** 00:00 local da data, em ISO UTC de 24 caracteres (sem presumir 24 h por dia). */
+export function midnightIso(date, timeZone) {
   const day = parseLocalDate(date).value;
   return new Date(localToInstant({ ...day, hour: 0, minute: 0 }, timeZone).ms).toISOString();
 }
-
-const toMsIntervals = (list) =>
-  (Array.isArray(list) ? list : []).map((i) => ({ startMs: Date.parse(i.startsAt), endMs: Date.parse(i.endsAt) }));
 
 /**
  * Horários disponíveis da página pública (design AF-10, 5.1). Somente leitura e sem transação: a
@@ -65,45 +72,23 @@ export function createAvailabilityService({
   engine = computeAvailability,
   perfNow = () => performance.now(),
 }) {
+  const layersDeps = { workingHoursRepository, timeBlocksRepository, appointments };
+  const bookableDeps = { servicesRepository, professionalsRepository };
+
   /** Falha da porta vira 503: nunca mostrar horário ocupado como livre. */
-  async function readBusy(businessId, professionalId, fromIso, toIso) {
-    let busy;
+  async function readLayersOr503(businessId, eligible, specificId, fromIso, toIso) {
     try {
-      busy = await appointments.findBusyByBusiness(businessId, { professionalId }, fromIso, toIso);
-      if (!(busy instanceof Map)) throw new TypeError('findBusyByBusiness deve devolver um Map.');
+      return await readLayers(layersDeps, businessId, eligible, specificId, fromIso, toIso);
     } catch (err) {
-      log.warn({ event: 'availability_appointments_failed', businessId, code: err?.code, name: err?.name });
+      if (!(err instanceof BusyUnavailableError)) throw err;
+      log.warn({
+        event: 'availability_appointments_failed',
+        businessId,
+        errCode: err.cause?.code,
+        errName: err.cause?.name,
+      });
       throw new ServiceUnavailableError('AVAILABILITY_UNAVAILABLE', M.unavailable);
     }
-    return busy;
-  }
-
-  /** Grade, bloqueios e ocupados dos elegíveis, uma consulta por camada. */
-  async function readLayers(businessId, eligible, specificId, fromIso, toIso) {
-    if (eligible.length === 0) return [];
-    if (specificId) {
-      const [weekly, blocks, busy] = await Promise.all([
-        workingHoursRepository.findByProfessional(businessId, specificId),
-        timeBlocksRepository.findApplicable(businessId, specificId, fromIso, toIso),
-        readBusy(businessId, specificId, fromIso, toIso),
-      ]);
-      return [
-        { id: specificId, weekly, blocks: toMsIntervals(blocks), appointments: toMsIntervals(busy.get(specificId)) },
-      ];
-    }
-    const [weeklyById, blocks, busy] = await Promise.all([
-      workingHoursRepository.findWeeklyByBusiness(businessId),
-      timeBlocksRepository.findApplicableByBusiness(businessId, fromIso, toIso),
-      readBusy(businessId, null, fromIso, toIso),
-    ]);
-    // Os bloqueios de "todos" valem para todo ativo, inclusive criado depois (critério 9).
-    const forAll = toMsIntervals(blocks.all);
-    return eligible.map((p) => ({
-      id: p.id,
-      weekly: weeklyById.get(p.id) ?? [],
-      blocks: [...forAll, ...toMsIntervals(blocks.byProfessional.get(p.id))],
-      appointments: toMsIntervals(busy.get(p.id)),
-    }));
   }
 
   return {
@@ -130,25 +115,15 @@ export function createAvailabilityService({
       if (!checked.ok || !business) throw new NotFoundError();
       const { serviceId, professionalId, from, to } = checked.value;
 
-      // 3. Serviço ativo e profissionais listados na página pública (ativos, com serviço ativo e grade).
-      const [service, listed] = await Promise.all([
-        servicesRepository.findBookable(business.id, serviceId),
-        professionalsRepository.findListedByBusinessId(business.id),
-      ]);
-      if (!service) throw new NotFoundError();
-
-      // 4. Elegíveis: listados que realizam o serviço (decisão 13).
-      let eligible = listed.filter((p) => (p.services || []).some((s) => s.id === serviceId));
+      // 3 e 4. Serviço ativo e elegíveis: listados na página pública que realizam o serviço
+      // (decisão 13). Serviço sem elegível (oculto da página) é 404 (AF-11, decisão 5).
+      const { service, eligible } = await resolveBookable(bookableDeps, business.id, { serviceId, professionalId });
       const specificId = professionalId === ANY_PROFESSIONAL ? null : professionalId;
-      if (specificId) {
-        eligible = eligible.filter((p) => p.id === specificId);
-        if (eligible.length === 0) throw new NotFoundError();
-      }
 
       // 5 e 6. Período em instantes (até 32 dias) e as camadas.
       const fromIso = midnightIso(from, timeZone);
       const toIso = midnightIso(addLocalDays(to, 1), timeZone);
-      const professionals = await readLayers(business.id, eligible, specificId, fromIso, toIso);
+      const professionals = await readLayersOr503(business.id, eligible, specificId, fromIso, toIso);
 
       // 7. Cálculo.
       const startedAt = perfNow();
@@ -171,7 +146,8 @@ export function createAvailabilityService({
         });
       }
 
-      // 8. Serialização: índices na lista de UUIDs elegíveis (R7).
+      // 8. Serialização: índices na lista de UUIDs elegíveis (R7). Em "qualquer profissional", o
+      // horário não diz quem está livre (AF-11, decisão 4: sem inferência de ocupação).
       const ids = eligible.map((p) => p.id);
       const indexOf = new Map(ids.map((id, i) => [id, i]));
       return {
@@ -185,14 +161,77 @@ export function createAvailabilityService({
         days: result.days.map((day) => ({
           date: day.date,
           weekday: day.weekday,
-          slots: day.slots.map((slot) => ({
-            start: slot.start,
-            end: slot.end,
-            professionals: slot.professionalIds.map((id) => indexOf.get(id)),
-          })),
+          slots: day.slots.map((slot) =>
+            specificId
+              ? { start: slot.start, end: slot.end, professionals: slot.professionalIds.map((id) => indexOf.get(id)) }
+              : { start: slot.start, end: slot.end },
+          ),
         })),
         truncated: result.truncated,
       };
+    },
+
+    /**
+     * Até `limit` inícios livres estritamente depois de `afterStart`, do dia de `afterStart` até
+     * BOOKING_SUGGESTIONS_DAYS - 1 dias depois, sem passar de hoje + 90 (AF-11, critério 16). Mesmo
+     * serviço; com um UUID, o mesmo profissional; com 'any', qualquer elegível (um início conta uma
+     * vez). Fora de transação, sem trava. Falha da porta, 404 (o serviço sumiu nesse meio-tempo) ou
+     * erro de leitura: [] com log warn.
+     * @param {{ business: { id: string, timezone: string }, serviceId: string, professionalId: string,
+     *   afterStart: string, nowMs: number, limit?: number, leadMinutes?: number }} args
+     * @returns {Promise<Array<{ start: string, end: string }>>}
+     */
+    async findSuggestions({
+      business,
+      serviceId,
+      professionalId,
+      afterStart,
+      nowMs,
+      limit = BOOKING_SUGGESTIONS_MAX,
+      leadMinutes = MIN_LEAD_MINUTES,
+    }) {
+      try {
+        const timeZone = business.timezone || DEFAULT_TIME_ZONE;
+        const parsed = parseLocalDateTime(afterStart);
+        if (!parsed.ok) return [];
+        const { service, eligible } = await resolveBookable(bookableDeps, business.id, { serviceId, professionalId });
+        const specificId = professionalId === ANY_PROFESSIONAL ? null : professionalId;
+        const today = instantToLocal(nowMs, timeZone).slice(0, 10);
+        const date = afterStart.slice(0, 10);
+        const horizon = addLocalDays(today, BOOKING_HORIZON_DAYS);
+        const window = addLocalDays(date, BOOKING_SUGGESTIONS_DAYS - 1);
+        const lastDate = window < horizon ? window : horizon;
+        if (date > lastDate) return [];
+        const fromIso = midnightIso(date, timeZone);
+        const toIso = midnightIso(addLocalDays(lastDate, 1), timeZone);
+        const professionals = await readLayers(layersDeps, business.id, eligible, specificId, fromIso, toIso);
+        const result = engine({
+          timeZone,
+          fromDate: date,
+          toDate: lastDate,
+          durationMinutes: service.durationMinutes,
+          notBeforeMs: nowMs + leadMinutes * MINUTE_MS,
+          professionals,
+        });
+        const afterMs = localToInstant(parsed.value, timeZone).ms;
+        const out = [];
+        for (const day of result.days) {
+          for (const slot of day.slots) {
+            if (slot.startMs <= afterMs) continue;
+            out.push({ start: slot.start, end: slot.end });
+            if (out.length >= limit) return out;
+          }
+        }
+        return out;
+      } catch (err) {
+        log.warn({
+          event: 'appointment_suggestions_failed',
+          businessId: business?.id,
+          errCode: (err?.cause ?? err)?.code,
+          errName: (err?.cause ?? err)?.name,
+        });
+        return [];
+      }
     },
   };
 }

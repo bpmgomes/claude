@@ -15,6 +15,7 @@ import { createMemoryStorage } from '../../src/storage/memory.js';
 import { textKey } from '../../src/shared/validation.js';
 import { createClock } from '../helpers/clock.js';
 import { WEEK_9_TO_18 } from '../helpers/session.js';
+import { realAppointmentsPort, seedRealAppointment } from '../helpers/appointments.js';
 
 let db;
 let ownerId;
@@ -23,6 +24,7 @@ let businessesRepository;
 let professionalsRepository;
 let workingHoursRepository;
 let clock;
+let appointments;
 
 beforeEach(async () => {
   db = createDatabase({ databasePath: ':memory:' });
@@ -50,6 +52,7 @@ beforeEach(async () => {
   });
   professionalsRepository = createProfessionalsRepository(db);
   workingHoursRepository = createWorkingHoursRepository(db);
+  appointments = await realAppointmentsPort(db);
 });
 
 afterEach(async () => {
@@ -62,6 +65,8 @@ function build(extra = {}) {
     workingHoursRepository,
     professionalsRepository,
     businessesRepository,
+    // Critério 31 do AF-11: o repositório real é o padrão; portas falsas só simulam falha.
+    appointments,
     now: clock.now,
     ...extra,
   });
@@ -123,6 +128,17 @@ test('porta falsa com contagem 2: affectedAppointmentsCount 2, grade gravada e p
     intervalsCount: 10,
     affectedAppointmentsCount: 2,
   });
+});
+
+test('repositório real (AF-11): 0 sem agendamentos; o agendamento das 10:00 fora da grade nova conta 1', async () => {
+  const p = await makeProfessional();
+  const service = build();
+  assert.equal((await service.replace(ownerId, p, { days: WEEK_9_TO_18 })).affectedAppointmentsCount, 0);
+  // Segunda 2/3/2026, 10:00 em São Paulo (13:00Z).
+  await seedRealAppointment(db, { businessId, professionalId: p, startsAt: '2026-03-02T13:00:00.000Z' });
+  assert.equal((await service.replace(ownerId, p, { days: WEEK_9_TO_18 })).affectedAppointmentsCount, 0);
+  const afternoon = WEEK_9_TO_18.map((d) => ({ weekday: d.weekday, intervals: d.intervals.length ? [{ start: '13:00', end: '18:00' }] : [] }));
+  assert.equal((await service.replace(ownerId, p, { days: afternoon })).affectedAppointmentsCount, 1);
 });
 
 test('porta que lança: grade gravada, affectedAppointmentsCount null e log warn', async () => {

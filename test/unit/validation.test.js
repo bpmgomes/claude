@@ -65,6 +65,14 @@ describe('validateEmail / normalizeEmail', () => {
   test('normalizeEmail faz trim + lowercase (critério 5)', () => {
     assert.equal(normalizeEmail(' Ana@X.com '), 'ana@x.com');
   });
+
+  test('normalizeEmail aplica NFC antes das minúsculas (AF-11, decisão 15)', () => {
+    const composed = 'JOS\u00C9@x.com';
+    const decomposed = 'JOSE\u0301@x.com';
+    assert.notEqual(composed, decomposed);
+    assert.equal(normalizeEmail(composed), normalizeEmail(decomposed));
+    assert.equal(normalizeEmail(decomposed), 'jos\u00e9@x.com');
+  });
   test('rejeita vazio (critério 13)', () => {
     assert.equal(validateEmail(''), 'Informe seu e-mail.');
     assert.equal(validateEmail('   '), 'Informe seu e-mail.');

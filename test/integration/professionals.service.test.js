@@ -16,6 +16,7 @@ import { createMemoryStorage } from '../../src/storage/memory.js';
 import { textKey } from '../../src/shared/validation.js';
 import { createClock } from '../helpers/clock.js';
 import { pngOf } from '../helpers/images.js';
+import { realAppointmentsPort, seedRealAppointment, insertCustomerDirect, insertAppointmentDirect } from '../helpers/appointments.js';
 
 let db;
 let ownerId;
@@ -25,6 +26,7 @@ let professionalsRepository;
 let servicesRepository;
 let storage;
 let clock;
+let appointments;
 
 beforeEach(async () => {
   db = createDatabase({ databasePath: ':memory:' });
@@ -52,6 +54,7 @@ beforeEach(async () => {
   });
   servicesRepository = createServicesRepository(db);
   professionalsRepository = createProfessionalsRepository(db);
+  appointments = await realAppointmentsPort(db);
   storage = createMemoryStorage();
 });
 
@@ -65,6 +68,8 @@ function build(extra = {}) {
     professionalsRepository,
     businessesRepository,
     storage,
+    // Critério 31 do AF-11: o repositório real é o padrão; portas falsas só simulam contagem ou falha.
+    appointments,
     now: clock.now,
     ...extra,
   });
@@ -182,24 +187,15 @@ test('porta que lança: rollback e profissional intacto (R6)', async () => {
   assert.equal((await rowOf(professional.id)).removed_at, null);
 });
 
-test('concorrência (critério 19): remoção x agendamento seguindo o contrato do AF-11, 50 rodadas', async () => {
-  await db.exec(`CREATE TABLE test_appointments (
-    id TEXT PRIMARY KEY,
-    professional_id TEXT NOT NULL REFERENCES professionals(id) ON DELETE RESTRICT,
-    starts_at TEXT NOT NULL,
-    cancelled_at TEXT
-  )`);
-  const appointments = {
-    countFutureByService: async () => 0,
-    async countFutureByProfessional(bId, professionalId, nowIso, conn) {
-      const row = await conn.get(
-        'SELECT COUNT(*) AS n FROM test_appointments WHERE professional_id = ? AND cancelled_at IS NULL AND starts_at > ?',
-        [professionalId, nowIso],
-      );
-      return Number(row.n);
-    },
-  };
-  const service = build({ appointments });
+test('concorrência (critério 19): remoção x agendamento na tabela real do AF-11, 50 rodadas', async () => {
+  const service = build();
+  const { serviceId } = await seedRealAppointment(db, {
+    businessId,
+    professionalId: (await service.create(ownerId, { name: 'Semente' })).professional.id,
+    startsAt: '2030-01-01T08:00:00.000Z',
+  });
+  const customerId = await insertCustomerDirect(db, businessId, { phone: '21987654321' });
+  await db.run('DELETE FROM appointments');
 
   /**
    * Contrato do AF-11: claimForBooking e INSERT na mesma transação. `preReads` simula as
@@ -210,11 +206,7 @@ test('concorrência (critério 19): remoção x agendamento seguindo o contrato 
     return db.transaction(async (tx) => {
       const { changes } = await professionalsRepository.claimForBooking(professionalId, businessId, tx);
       if (changes === 0) throw new ConflictError('PROFESSIONAL_UNAVAILABLE', 'Profissional indisponível.');
-      await tx.run('INSERT INTO test_appointments (id, professional_id, starts_at) VALUES (?, ?, ?)', [
-        randomUUID(),
-        professionalId,
-        '2030-01-01T10:00:00.000Z',
-      ]);
+      await insertAppointmentDirect(tx, { businessId, professionalId, customerId, serviceId, startsAt: '2030-01-01T10:00:00.000Z' });
     });
   }
 
@@ -238,7 +230,7 @@ test('concorrência (critério 19): remoção x agendamento seguindo o contrato 
     }
     const removed = Boolean((await rowOf(professional.id)).removed_at);
     const booked = Number(
-      (await db.get('SELECT COUNT(*) AS n FROM test_appointments WHERE professional_id = ?', [professional.id])).n,
+      (await db.get('SELECT COUNT(*) AS n FROM appointments WHERE professional_id = ?', [professional.id])).n,
     );
     // Exatamente um efeito, nunca removido com agendamento futuro.
     assert.notEqual(removed && booked > 0, true, `rodada ${i}: removido com agendamento`);
@@ -252,14 +244,31 @@ test('concorrência (critério 19): remoção x agendamento seguindo o contrato 
       assert.equal(removal.status, 'rejected');
       bookingWins += 1;
     }
-    // Remove o profissional da contagem do limite de 50 para as próximas rodadas.
+    // Remove o profissional da contagem do limite de 50 para as próximas rodadas (cancelando antes).
     if (!removed) {
-      await db.run('DELETE FROM test_appointments WHERE professional_id = ?', [professional.id]);
+      await db.run(
+        "UPDATE appointments SET status = 'cancelled', cancelled_at = ?, updated_at = ? WHERE professional_id = ?",
+        [clock.now().toISOString(), clock.now().toISOString(), professional.id],
+      );
       await service.remove(ownerId, professional.id);
     }
   }
   assert.equal(removedWins + bookingWins, 50);
   assert.ok(removedWins > 0 && bookingWins > 0, 'as duas ordens foram exercitadas');
+});
+
+test('repositório real (AF-11): agendamento futuro bloqueia a remoção; passado e cancelado não', async () => {
+  const service = build();
+  const { professional } = await service.create(ownerId, { name: 'Ana' });
+  const { id, serviceId } = await seedRealAppointment(db, { businessId, professionalId: professional.id, startsAt: '2026-03-02T13:00:00.000Z' });
+  await seedRealAppointment(db, { businessId, professionalId: professional.id, serviceId, startsAt: '2026-02-27T13:00:00.000Z' });
+  await assert.rejects(
+    service.remove(ownerId, professional.id),
+    (err) => err instanceof ProfessionalHasAppointmentsError && err.futureAppointmentsCount === 1,
+  );
+  await db.run("UPDATE appointments SET status = 'cancelled', cancelled_at = updated_at WHERE id = ?", [id]);
+  await service.remove(ownerId, professional.id);
+  assert.ok((await rowOf(professional.id)).removed_at);
 });
 
 test('setPhoto com profissional removido no meio do processamento: 404 e a chave nova não fica', async () => {

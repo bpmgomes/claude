@@ -46,6 +46,9 @@ function fromRow(row) {
 
 const placeholdersFor = (list) => list.map(() => '?').join(', ');
 
+/** Teto de `claimManyForBooking` (= PROFESSIONALS_PER_BUSINESS_MAX do AF-07). */
+const CLAIM_MANY_MAX = 50;
+
 /** `professionals/<uuid>.png` -> `/media/professionals/<uuid>.png` */
 export function photoUrlOf(photoKey) {
   return photoKey ? `/media/${photoKey}` : null;
@@ -403,6 +406,28 @@ export function createProfessionalsRepository(db) {
      */
     async claimForBooking(id, businessId, conn = db) {
       return lockActive(id, businessId, conn);
+    },
+
+    /**
+     * Trava de vários profissionais para a reserva em "qualquer profissional" (AF-11, 4.3): um
+     * `claimForBooking` por id, em ordem fixa de id (comparação por código de caractere, igual ao
+     * ORDER BY id do SQLite para UUIDs em minúsculas), contra impasse no PostgreSQL (critério 23).
+     *
+     * Ordem global de travas: businesses -> services -> professionals (por id). A reserva trava
+     * serviço e profissional(is), nunca o negócio; o bloqueio do AF-16 trava businesses e depois os
+     * profissionais; a remoção (AF-07) e a grade (AF-08) travam só o profissional.
+     * @param {string[]} ids no máximo PROFESSIONALS_PER_BUSINESS_MAX (50)
+     * @returns {Promise<Set<string>>} os travados (changes 1); removidos ficam de fora
+     */
+    async claimManyForBooking(ids, businessId, conn = db) {
+      const sorted = [...new Set(ids)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      if (sorted.length > CLAIM_MANY_MAX) throw new RangeError(`claimManyForBooking aceita no máximo ${CLAIM_MANY_MAX} ids.`);
+      const claimed = new Set();
+      for (const id of sorted) {
+        const { changes } = await lockActive(id, businessId, conn);
+        if (changes > 0) claimed.add(id);
+      }
+      return claimed;
     },
   };
 }

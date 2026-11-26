@@ -1,10 +1,12 @@
 // AF-04 (critério 16) e AF-16 item 5: `Cache-Control: no-store` em toda resposta de /api/* sem
-// política própria, inclusive erros; as rotas fora de /api/ mantêm as políticas delas.
+// política própria, inclusive erros; as rotas fora de /api/ mantêm as políticas delas. AF-11: o POST
+// público de agendamento também.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildTestApp } from '../helpers/test-app.js';
 import { createClock } from '../helpers/clock.js';
 import { seedPublicBusiness } from '../helpers/public-fixture.js';
+import { bookingBody, postAppointment } from '../helpers/appointments.js';
 
 describe('no-store em /api/*', () => {
   let app;
@@ -51,6 +53,22 @@ describe('no-store em /api/*', () => {
       assert.equal(res.headers['cache-control'], 'no-store');
     });
   }
+
+  test('POST /api/public/<slug>/appointments com 201, 409 e 422 (AF-11, critério 41)', async () => {
+    const key = '3b241101-e2bb-4255-8caf-4136c566a962';
+    const post = (start, headers = {}) =>
+      postAppointment(
+        app,
+        seed.slug,
+        bookingBody({ serviceId: seed.services[0].id, professionalId: seed.professionals[0].id, start, customer: { phone: '(11) 97654-3210' } }),
+        { headers },
+      );
+    const created = await post('2026-11-27T10:00', { 'idempotency-key': key });
+    const taken = await post('2026-11-27T10:00');
+    const reused = await post('2026-11-27T14:00', { 'idempotency-key': key });
+    assert.deepEqual([created.statusCode, taken.statusCode, reused.statusCode], [201, 409, 422]);
+    for (const res of [created, taken, reused]) assert.equal(res.headers['cache-control'], 'no-store');
+  });
 
   // QA AF-04: o roteador decodifica o percent-encoding (`/%61pi/business` casa `GET /api/business`);
   // a política segue a rota casada ou o caminho decodificado, nunca o texto bruto.

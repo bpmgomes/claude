@@ -193,4 +193,26 @@ describe('logs (critério 20)', () => {
     }
     assert.match(logs(), /"msg":"teste"/);
   });
+
+  test('AF-11 (critério 38): o retorno de findOrCreate nunca vai ao log, mesmo em trace; snapshot e input logados de propósito saem [REDACTED]', async () => {
+    assert.equal(app.log.level, 'trace');
+    const input = { name: 'Rubem Fonseca', phone: '(21) 98765-1234', email: `Rubem.${seq}@Exemplo.net` };
+    const result = await inTx((tx) => service.findOrCreate(businessA, input, tx));
+    for (const needle of ['rubem', 'fonseca', '98765', '21987651234', 'exemplo.net']) {
+      assert.equal(logs().toLowerCase().includes(needle), false, needle);
+    }
+    app.log.info({ snapshot: result.snapshot, input, nested: { result, deeper: { snapshot: result.snapshot } } }, 'redact-af11');
+    const line = logs()
+      .split('\n')
+      .find((l) => l.includes('"msg":"redact-af11"'));
+    const parsed = JSON.parse(line);
+    assert.equal(parsed.snapshot, '[REDACTED]');
+    assert.equal(parsed.input, '[REDACTED]');
+    assert.equal(parsed.nested.result.snapshot, '[REDACTED]');
+    assert.equal(parsed.nested.deeper.snapshot, '[REDACTED]');
+    for (const needle of ['rubem', 'fonseca', '98765', '21987651234', 'exemplo.net']) {
+      assert.equal(line.toLowerCase().includes(needle), false, needle);
+    }
+    assert.equal(parsed.nested.result.customerId, result.customerId);
+  });
 });

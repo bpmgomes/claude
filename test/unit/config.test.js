@@ -1,6 +1,13 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadConfig, mergeConfig, parseTrustProxy } from '../../src/config.js';
+import {
+  loadConfig,
+  mergeConfig,
+  parseTrustProxy,
+  resolveConflictsTokenSecret,
+  DEV_TEST_ENVS,
+  COOKIE_INSECURE_ENVS,
+} from '../../src/config.js';
 
 describe('loadConfig', () => {
   test('cookieSecure é true sem env (critério 1)', () => {
@@ -148,5 +155,66 @@ describe('mergeConfig', () => {
       queueMax: 4,
       queueTimeoutMs: 10000,
     });
+  });
+});
+
+describe('AF-11: publicBooking, CONFLICTS_TOKEN_SECRET e appointmentEvents', () => {
+  test('padrão de rateLimit.publicBooking: 10 por minuto por IP', () => {
+    assert.deepEqual(loadConfig({}).rateLimit.publicBooking, { perIp: 10 });
+  });
+
+  test('loadConfig({}) e loadConfig({ NODE_ENV: "production" }) não lançam por causa do segredo', () => {
+    assert.equal(loadConfig({}).conflictsTokenSecret, null);
+    assert.equal(loadConfig({}).nodeEnv, null);
+    assert.equal(loadConfig({ NODE_ENV: 'production' }).nodeEnv, 'production');
+    assert.equal(loadConfig({ CONFLICTS_TOKEN_SECRET: 'x'.repeat(40) }).conflictsTokenSecret, 'x'.repeat(40));
+  });
+
+  test('resolveConflictsTokenSecret: 32 caracteres aceito; 31 lança sem ecoar o valor', () => {
+    assert.deepEqual(resolveConflictsTokenSecret({ conflictsTokenSecret: 'a'.repeat(32), nodeEnv: 'production' }), {
+      secret: 'a'.repeat(32),
+      generated: false,
+    });
+    const short = 'segredo-curto-0123456789abcdefg';
+    assert.equal(short.length, 31);
+    assert.throws(
+      () => resolveConflictsTokenSecret({ conflictsTokenSecret: short, nodeEnv: 'development' }),
+      (err) => /pelo menos 32/.test(err.message) && !err.message.includes(short),
+    );
+  });
+
+  test('ausente com development/test gera 43 caracteres, generated: true, e dois resultados diferentes', () => {
+    for (const nodeEnv of DEV_TEST_ENVS) {
+      const a = resolveConflictsTokenSecret({ conflictsTokenSecret: null, nodeEnv });
+      const b = resolveConflictsTokenSecret({ conflictsTokenSecret: null, nodeEnv });
+      assert.equal(a.generated, true);
+      assert.equal(a.secret.length, 43);
+      assert.notEqual(a.secret, b.secret);
+    }
+    assert.equal(COOKIE_INSECURE_ENVS, DEV_TEST_ENVS);
+  });
+
+  for (const nodeEnv of ['production', 'staging', 'Production', null, undefined, ' test']) {
+    test(`ausente com NODE_ENV=${JSON.stringify(nodeEnv)} lança`, () => {
+      assert.throws(() => resolveConflictsTokenSecret({ conflictsTokenSecret: null, nodeEnv }), /CONFLICTS_TOKEN_SECRET é obrigatório/);
+      assert.throws(() => resolveConflictsTokenSecret(loadConfig(nodeEnv ? { NODE_ENV: nodeEnv } : {})), /obrigatório/);
+    });
+  }
+
+  test('mergeConfig descarta appointmentEvents', () => {
+    const merged = mergeConfig(loadConfig({}), { appointmentEvents: { confirmed: async () => {} } });
+    assert.equal('appointmentEvents' in merged, false);
+  });
+
+  test('buildApp sem segredo fora de development/test não sobe; o segredo não fica em app.config', async () => {
+    const { buildApp } = await import('../../src/app.js');
+    await assert.rejects(buildApp({ databasePath: ':memory:', conflictsTokenSecret: null, nodeEnv: 'production' }), /obrigatório/);
+    const app = await buildApp({ databasePath: ':memory:', conflictsTokenSecret: 'z'.repeat(40), logLevel: 'silent' });
+    try {
+      assert.equal('conflictsTokenSecret' in app.config, false);
+      assert.equal(JSON.stringify(app.config).includes('z'.repeat(40)), false);
+    } finally {
+      await app.close();
+    }
   });
 });

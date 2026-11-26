@@ -293,10 +293,105 @@ section h2 {
   font-weight: 600;
 }
 
+.pp-confirm-button {
+  color: #fff;
+  background: #1d4ed8;
+  cursor: pointer;
+}
+
+.pp-confirm-button:focus-visible,
+.pp-suggestion:focus-visible {
+  outline: 3px solid #1e3a8a;
+  outline-offset: 2px;
+}
+
 .pp-confirm-button:disabled {
   color: #374151;
   background: #e5e7eb;
   cursor: not-allowed;
+}
+
+.pp-confirm-button[aria-busy="true"] {
+  cursor: progress;
+}
+
+/* AF-11: alerta do 409/erros (contraste #7f1d1d sobre #fef2f2 acima de 7:1) e sugestões. */
+.pp-alert {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-left: 4px solid #b91c1c;
+  color: #7f1d1d;
+  background: #fef2f2;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pp-suggestions { margin: 0 0 12px; }
+
+.pp-suggestions-title {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.pp-suggestions-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pp-suggestion {
+  width: 100%;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 8px;
+  border: 1px solid #1d4ed8;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  color: #1d4ed8;
+  background: #fff;
+  cursor: pointer;
+}
+
+/* Tela de sucesso (AF-11, critério 27). Nome e endereço longos quebram em qualquer ponto. */
+.pp-success {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.pp-success h2 { margin: 0; }
+
+.pp-success h2:focus,
+.pp-success h2:focus-visible {
+  outline: 3px solid #1e3a8a;
+  outline-offset: 2px;
+}
+
+.pp-success-details {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.pp-success-details dt { font-weight: 700; }
+
+.pp-success-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.pp-success-phone { margin: 0; overflow-wrap: anywhere; }
+
+.pp-success-phone-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
 }
 
 /* Passo "Seus dados" (AF-04). Nenhuma largura fixa acima de 320 px; inputs com 1rem (sem zoom no iOS). */
