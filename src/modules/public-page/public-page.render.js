@@ -120,13 +120,13 @@ function professionalItem(professional) {
 `;
 }
 
-function offer(page) {
+function offer(page, options) {
   return html`<section id="servicos" tabindex="-1" aria-labelledby="servicos-titulo">
 <h2 id="servicos-titulo">Serviços</h2>
 <ul class="pp-services">
 ${page.services.map(serviceItem)}</ul>
 </section>
-${booking(page)}
+${booking(page, options)}
 <section id="profissionais" aria-labelledby="profissionais-titulo">
 <h2 id="profissionais-titulo">Profissionais</h2>
 <ul class="pp-professionals">
@@ -182,12 +182,14 @@ function customerForm(business) {
  * "Gerenciar agendamento" fica oculto e sem `href` no HTML: o JS o preenche só com o link válido do
  * 201 (`manage.url`) e a política vinda do servidor. O telefone continua sempre visível, e é o único
  * caminho quando `manage` é null.
+ * AF-18 (critério 30): com o transporte de e-mail ativo (`emailEnabled`), uma frase fixa avisa que os
+ * detalhes foram para o e-mail; sem ele, o HTML é byte a byte o de antes.
  */
-function successSection(business) {
+function successSection(business, { emailEnabled = false } = {}) {
   return html`<section class="pp-success" hidden tabindex="-1" aria-labelledby="sucesso-titulo">
 <h2 id="sucesso-titulo" tabindex="-1">Agendamento confirmado</h2>
 <dl class="pp-success-details"></dl>
-<div class="pp-success-manage" hidden>
+${emailEnabled ? SUCCESS_EMAIL_LINE : ''}<div class="pp-success-manage" hidden>
 <p class="pp-success-policy"></p>
 <p><a class="pp-success-manage-link" rel="noreferrer">Gerenciar agendamento (cancelar ou remarcar)</a></p>
 <p class="pp-success-manage-url"></p>
@@ -197,8 +199,13 @@ function successSection(business) {
 </section>`;
 }
 
+/** Frase fixa da tela de sucesso com e-mail ativo (AF-18, critério 30). Constante, sem dado. */
+export const SUCCESS_EMAIL_TEXT = 'Enviamos os detalhes para o seu e-mail.';
+const SUCCESS_EMAIL_LINE = html`<p class="pp-success-email">${SUCCESS_EMAIL_TEXT}</p>
+`;
+
 /** Seção de horários (AF-10, 4.4): oculta sem JavaScript, com o aviso do <noscript>. */
-function booking(page) {
+function booking(page, options) {
   const { business, booking: b } = page;
   return html`<div id="agendar">
 <noscript><p class="pp-notice">Para ver os horários livres, ative o JavaScript ou ligue para <a href="${business.phoneHref}">${business.phoneDisplay}</a>.</p></noscript>
@@ -224,7 +231,7 @@ ${page.professionals.map(professionalOption)}</select>
 ${customerForm(business)}
 </div>
 </section>
-${successSection(business)}
+${successSection(business, options)}
 </div>`;
 }
 
@@ -238,9 +245,10 @@ Entre em contato pelo telefone <a class="pp-empty-phone" href="${business.phoneH
 
 /**
  * @param {import('./public-page.view.js').PublicPage} page
+ * @param {{ emailEnabled?: boolean }} [options] AF-18: transporte de e-mail ativo
  * @returns {string}
  */
-export function renderPublicPage(page) {
+export function renderPublicPage(page, { emailEnabled = false } = {}) {
   const { business } = page;
   const headHtml = head({
     title: `${business.name} · AgendaFácil`,
@@ -258,7 +266,7 @@ ${
     ? html`<p class="pp-notice" id="agendar-aviso">Escolha um horário livre abaixo e confirme online. Se preferir, ligue para ${business.phoneDisplay}.</p>`
     : html`<p class="pp-notice" id="agendar-aviso">Agendamento online em breve. Por enquanto, ligue para ${business.phoneDisplay}.</p>`
 }
-${page.hasOffer ? offer(page) : emptyState(business)}
+${page.hasOffer ? offer(page, { emailEnabled }) : emptyState(business)}
 </main>`;
   return documentOf(headHtml, bodyHtml);
 }

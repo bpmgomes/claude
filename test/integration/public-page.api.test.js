@@ -5,6 +5,7 @@ import { createClock } from '../helpers/clock.js';
 import { seedPublicBusiness } from '../helpers/public-fixture.js';
 import { signupAndLogin, createBusinessFor, createService, createProfessional, putHours, WEEK_9_TO_18 } from '../helpers/session.js';
 import { pngOf } from '../helpers/images.js';
+import { createMemoryMailTransport } from '../../src/modules/email/transports/memory.js';
 import { tagsOf, textOf } from '../helpers/html.js';
 import {
   PUBLIC_PAGE_CSP,
@@ -534,4 +535,36 @@ test('erro inesperado: 500 HTML fixo, no-store e log public_page_error sem eco',
   } finally {
     await app.close();
   }
+});
+
+describe('AF-18 (decisão 6): a tela de sucesso só promete e-mail com transporte ativo', () => {
+  const PHRASE = 'Enviamos os detalhes para o seu e-mail.';
+
+  test('transporte injetado e worker ligado: a frase aparece na página', async () => {
+    const { app } = await buildTestApp({ mailTransport: createMemoryMailTransport(), email: { worker: { enabled: true, intervalMs: 15_000 } } });
+    try {
+      assert.equal(app.config.email.enabled, true);
+      const seed = await seedPublicBusiness(app, { services: 1, professionals: 1 });
+      const res = await get(app, `/${seed.slug}`);
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.body.split(PHRASE).length - 1, 1);
+      assert.match(res.body, /class="pp-success-email"/);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('transporte none (padrão): a frase não aparece', async () => {
+    const { app } = await buildTestApp();
+    try {
+      assert.equal(app.config.email.enabled, false);
+      const seed = await seedPublicBusiness(app, { services: 1, professionals: 1 });
+      const res = await get(app, `/${seed.slug}`);
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.body.includes(PHRASE), false);
+      assert.equal(res.body.includes('pp-success-email'), false);
+    } finally {
+      await app.close();
+    }
+  });
 });

@@ -99,3 +99,32 @@ describe('CLI npm run smoke', () => {
     assert.match(output, /COOKIE_SECURE=false/);
   });
 });
+
+describe('CLI npm run smoke com e-mail (AF-18, critério 32)', () => {
+  const NO_EMAIL = { EMAIL_TRANSPORT: undefined, EMAIL_FROM: undefined, EMAIL_FROM_NAME: undefined, EMAIL_FILE_DIR: undefined, SMTP_HOST: undefined, SMTP_PORT: undefined, SMTP_SECURE: undefined, SMTP_USER: undefined, SMTP_PASSWORD: undefined };
+
+  test('produção sem EMAIL_TRANSPORT sobe e avisa email_transport_not_configured', async () => {
+    const { code, output } = await runCli(baseEnv({ ...NO_EMAIL, CONFLICTS_TOKEN_SECRET: GOOD_SECRET, COOKIE_SECURE: undefined }));
+    assert.equal(code, 0, output);
+    assert.match(output, /email_transport_not_configured/);
+  });
+
+  test('EMAIL_TRANSPORT=memory em produção: falha', async () => {
+    const { code, output } = await runCli(baseEnv({ ...NO_EMAIL, CONFLICTS_TOKEN_SECRET: GOOD_SECRET, COOKIE_SECURE: undefined, EMAIL_TRANSPORT: 'memory' }));
+    assert.equal(code, 1, output);
+    assert.match(output, /smoke: FALHOU/);
+  });
+
+  test('EMAIL_TRANSPORT=smtp sem SMTP_HOST: falha sem ecoar EMAIL_FROM nem a senha', async () => {
+    const from = 'remetente-secreto@smoke.example';
+    const password = 'senha-de-teste-nao-secreta-xyz';
+    const { code, output } = await runCli(
+      baseEnv({ ...NO_EMAIL, CONFLICTS_TOKEN_SECRET: GOOD_SECRET, COOKIE_SECURE: undefined, EMAIL_TRANSPORT: 'smtp', EMAIL_FROM: from, SMTP_PASSWORD: password }),
+    );
+    assert.equal(code, 1, output);
+    assert.match(output, /smoke: FALHOU/);
+    assert.match(output, /SMTP_HOST/);
+    assert.equal(output.includes(from), false);
+    assert.equal(output.includes(password), false);
+  });
+});

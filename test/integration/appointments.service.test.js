@@ -639,7 +639,7 @@ describe('eventos pós-commit (critério 44)', () => {
   afterEach(() => app.close());
   const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-  test('a porta recebe só { appointmentId, businessId, manageUrl }, depois do COMMIT (a linha já é visível)', async () => {
+  test('a porta recebe só { appointmentId, businessId } (AF-18: sem manageUrl), depois do COMMIT (a linha já é visível)', async () => {
     const received = [];
     const service = buildService({
       appointmentEvents: {
@@ -653,7 +653,7 @@ describe('eventos pós-commit (critério 44)', () => {
     await tick();
     await tick();
     assert.equal(received.length, 1);
-    assert.deepEqual(Object.keys(received[0].event).sort(), ['appointmentId', 'businessId', 'manageUrl']);
+    assert.deepEqual(Object.keys(received[0].event).sort(), ['appointmentId', 'businessId']);
     assert.equal(received[0].event.businessId, businessId);
     assert.equal(received[0].row.status, 'confirmed');
   });

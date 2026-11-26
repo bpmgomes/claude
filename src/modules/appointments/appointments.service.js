@@ -27,7 +27,10 @@ import { resolveBookable } from '../availability/bookable.js';
 import { readLayers, BusyUnavailableError } from '../availability/availability-layers.js';
 import { toPublicAppointment } from './appointments.view.js';
 import { noAppointmentEvents, emitAfterCommit } from './appointment-events-port.js';
-import { newManageToken, manageUrlOf } from './manage-token.js';
+import { newManageToken } from './manage-token.js';
+import { createManageTokenIssuer } from './manage-token-issuer.js';
+import { enqueueEmail as enqueueEmailDefault } from '../email/enqueue-email.js';
+import { EMAIL_KIND_CONFIRMED } from '../email/email-rules.js';
 import { createManageTokensRepository } from './manage-tokens.repository.js';
 import { createReschedulesRepository } from './reschedules.repository.js';
 import { toManageLink } from './manage.view.js';
@@ -93,6 +96,8 @@ function requestHashOf({ serviceId, professionalId, start }, customer) {
  *   manageTokensRepository?: ReturnType<typeof import('./manage-tokens.repository.js').createManageTokensRepository>,
  *   publicBaseUrl?: string,                  // base do link de gerenciar (AF-12); nunca o Host
  *   newToken?: typeof newManageToken,        // injetável nos testes
+ *   tokenIssuer?: ReturnType<typeof createManageTokenIssuer>,  // emissor único com teto (AF-18)
+ *   enqueueEmail?: typeof enqueueEmailDefault,                 // fila de e-mails na tx (AF-18)
  *   now?: () => Date,
  *   log?: { info: Function, warn: Function, error: Function },
  *   newId?: () => string,
@@ -115,6 +120,8 @@ export function createAppointmentsService({
   reschedulesRepository = createReschedulesRepository(db),
   publicBaseUrl = '',
   newToken = newManageToken,
+  tokenIssuer = createManageTokenIssuer({ manageTokensRepository, publicBaseUrl, newToken }),
+  enqueueEmail = enqueueEmailDefault,
   now = () => new Date(),
   log = noopLog,
   newId = randomUUID,
@@ -319,23 +326,12 @@ export function createAppointmentsService({
     return appointmentsRepository.findById(id, businessId, tx);
   }
 
-  /** Token novo do agendamento, na transação. Cancelado: já nasce revogado (todos revogados juntos). */
-  async function issueManageToken(tx, { businessId, appointmentId, expiresAt, status, nowIso }) {
-    const { token, tokenHash } = newToken();
-    const cancelled = status === 'cancelled';
-    await manageTokensRepository.insert(
-      {
-        tokenHash,
-        businessId,
-        appointmentId,
-        createdAt: nowIso,
-        expiresAt,
-        revokedAt: cancelled ? nowIso : null,
-        revokedReason: cancelled ? 'cancelled' : null,
-      },
-      tx,
-    );
-    return manageUrlOf(publicBaseUrl, token);
+  /**
+   * Token novo do agendamento, na transação, pelo emissor único com o teto de 5 vivos (AF-18,
+   * critério 11). Cancelado: já nasce revogado. @returns {Promise<string>} o link
+   */
+  async function issueManageToken(tx, args) {
+    return (await tokenIssuer.issue(tx, args)).url;
   }
 
   return {
@@ -436,7 +432,14 @@ export function createAppointmentsService({
             { batch: MANAGE_TOKENS_PURGE_BATCH },
             tx,
           );
-          return { booked, responseBody, manageUrl };
+          // AF-18 (critérios 3 e 6): a linha do e-mail nasce NESTA transação, como última escrita.
+          const email = await enqueueEmail(tx, {
+            kind: EMAIL_KIND_CONFIRMED,
+            businessId: business.id,
+            appointmentId: booked.appointmentId,
+            nowIso,
+          });
+          return { booked, responseBody, manageUrl, email };
         });
 
       let outcome;
@@ -482,7 +485,7 @@ export function createAppointmentsService({
         const manage = outcome.manageUrl ? toManageLink({ url: outcome.manageUrl, business }) : null;
         return { status: 201, body: { ...JSON.parse(outcome.replay), manage } };
       }
-      const { booked, responseBody, manageUrl } = outcome;
+      const { booked, responseBody, manageUrl, email } = outcome;
       log.info({
         event: 'appointment_created',
         businessId: business.id,
@@ -491,7 +494,9 @@ export function createAppointmentsService({
         target,
         durationMinutes: booked.service.durationMinutes,
       });
-      emitAfterCommit(appointmentEvents, 'confirmed', { appointmentId: booked.appointmentId, businessId: business.id, manageUrl }, log);
+      if (email.enqueued) log.info({ event: 'email_enqueued', outboxId: email.id, kind: EMAIL_KIND_CONFIRMED });
+      // Só ids: a porta apenas acorda o worker de e-mail (AF-18, decisão 3).
+      emitAfterCommit(appointmentEvents, 'confirmed', { appointmentId: booked.appointmentId, businessId: business.id }, log);
       return { status: 201, body: { ...responseBody, manage: toManageLink({ url: manageUrl, business }) } };
     },
 

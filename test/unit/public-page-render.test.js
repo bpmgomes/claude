@@ -433,3 +433,20 @@ function escapeForTest(text) {
   const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;' };
   return text.replace(/[&<>"'`]/g, (c) => map[c]);
 }
+
+describe('AF-18: frase de e-mail na tela de sucesso (critério 30)', () => {
+  test('sem emailEnabled, HTML idêntico ao padrão; com true, .pp-success-email dentro da seção de sucesso', async () => {
+    const { SUCCESS_EMAIL_TEXT } = await import('../../src/modules/public-page/public-page.render.js');
+    const plain = renderPublicPage(page());
+    assert.equal(renderPublicPage(page(), { emailEnabled: false }), plain);
+    assert.equal(plain.includes('pp-success-email'), false);
+    const withEmail = renderPublicPage(page(), { emailEnabled: true });
+    assert.equal(SUCCESS_EMAIL_TEXT, 'Enviamos os detalhes para o seu e-mail.');
+    const section = withEmail.slice(withEmail.indexOf('<section class="pp-success"'), withEmail.indexOf('</section>', withEmail.indexOf('<section class="pp-success"')));
+    assert.ok(section.includes(`<p class="pp-success-email">${SUCCESS_EMAIL_TEXT}</p>`));
+    // Só a linha nova difere.
+    assert.equal(withEmail.replace(`<p class="pp-success-email">${SUCCESS_EMAIL_TEXT}</p>\n`, ''), plain);
+    // Sem oferta não há tela de sucesso, com ou sem e-mail.
+    assert.equal(renderPublicPage(page({ hasOffer: false }), { emailEnabled: true }), renderPublicPage(page({ hasOffer: false })));
+  });
+});

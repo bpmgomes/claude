@@ -7,6 +7,11 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
 import { loadConfig, mergeConfig, resolveConflictsTokenSecret } from './config.js';
+import { resolveEmailConfig, createMailTransport } from './modules/email/email-config.js';
+import { createEmailOutboxRepository } from './modules/email/email-outbox.repository.js';
+import { createEmailWorker } from './modules/email/email-worker.js';
+import { enqueueEmail } from './modules/email/enqueue-email.js';
+import { createManageTokenIssuer } from './modules/appointments/manage-token-issuer.js';
 import { errorHandler, RateLimitedError } from './http/errors.js';
 import { createSecurityHeaders, SECURITY_HEADERS_PROBE_URL } from './http/security-headers.js';
 import { createDatabase } from './db/index.js';
@@ -52,7 +57,7 @@ import { createCustomersService } from './modules/customers/customers.service.js
 import { createAppointmentsRepository } from './modules/appointments/appointments.repository.js';
 import { createAppointmentsPort } from './modules/appointments/appointments-port.js';
 import { createAppointmentsService } from './modules/appointments/appointments.service.js';
-import { noAppointmentEvents } from './modules/appointments/appointment-events-port.js';
+import { noAppointmentEvents, combineAppointmentEvents } from './modules/appointments/appointment-events-port.js';
 import appointmentsRoutes from './modules/appointments/appointments.routes.js';
 import { createManageTokensRepository } from './modules/appointments/manage-tokens.repository.js';
 import { createReschedulesRepository } from './modules/appointments/reschedules.repository.js';
@@ -110,6 +115,14 @@ export const REDACT_PATHS = [
   // AF-12 (critério 10): token de gerenciar, o hash e o link (payload dos eventos) em até 4 níveis. A
   // URL do pedido sai pelo serializador `req` (redactLogUrl).
   ...['token', 'tokenHash', 'token_hash', 'manageUrl'].flatMap((key) => [key, `*.${key}`, `*.*.${key}`, `*.*.*.${key}`]),
+  // AF-18 (critério 26): mensagem de e-mail (destinatário, remetente, assunto, corpo, anexos) e
+  // credenciais SMTP em até 4 níveis. Os logs do worker nunca recebem esses objetos; isto é rede.
+  ...['to', 'from', 'subject', 'text', 'html', 'attachments', 'smtpPassword', 'auth'].flatMap((key) => [
+    key,
+    `*.${key}`,
+    `*.*.${key}`,
+    `*.*.*.${key}`,
+  ]),
 ];
 
 /**
@@ -145,8 +158,12 @@ export const PAGES = Object.freeze({
  *   `storage` (instância de `Storage`; padrão: disco local em `config.uploadsDir`) e
  *   `imageLimiter` (instância pronta de `createImageLimiter`; padrão: criada com
  *   `config.imageProcessing`, dividida entre logo e foto) e `appointmentEvents` (porta de eventos
- *   pós-commit do AF-11; padrão: `noAppointmentEvents`)
+ *   pós-commit do AF-11; padrão: `noAppointmentEvents`; combinada com a porta que acorda o worker de
+ *   e-mail) e `mailTransport` (porta de envio do AF-18; com ela o transporte é `injected`, ativo).
+ * O worker de e-mail só roda com o servidor ouvindo (`onListen`): `app.inject` dos testes nunca o
+ * liga sozinho; os testes chamam `app.services.emailWorker.runOnce()`.
  * @throws {Error} sem `CONFLICTS_TOKEN_SECRET` fora de development/test, ou com valor curto
+ * @throws {Error} configuração de e-mail inválida (resolveEmailConfig, mensagens sem eco)
  * @returns {Promise<import('fastify').FastifyInstance>}
  */
 export async function buildApp(overrides = {}) {
@@ -155,8 +172,11 @@ export async function buildApp(overrides = {}) {
   // em log). Lança fora de development/test sem CONFLICTS_TOKEN_SECRET (AF-11, critério 36).
   const { secret: conflictsTokenSecret, generated: conflictsTokenSecretGenerated } =
     resolveConflictsTokenSecret(fullConfig);
-  const { conflictsTokenSecret: _secret, ...publicConfig } = fullConfig;
-  const config = Object.freeze(publicConfig);
+  // AF-18 (design 2.2): transporte de e-mail decidido e validado aqui; a senha SMTP fica só nesta
+  // função e no adaptador SMTP (nunca em app.config nem em log).
+  const emailConfig = resolveEmailConfig(fullConfig, { injected: Boolean(overrides.mailTransport) });
+  const { conflictsTokenSecret: _secret, smtpPassword, ...publicConfig } = fullConfig;
+  const config = Object.freeze({ ...publicConfig, email: Object.freeze(emailConfig) });
   const now = overrides.now || (() => new Date());
 
   const logger = {
@@ -205,6 +225,7 @@ export async function buildApp(overrides = {}) {
 
   // Preenchidos depois do registro do @fastify/rate-limit (null sem rate limit).
   if (conflictsTokenSecretGenerated) app.log.warn({ event: 'conflicts_token_secret_generated' });
+  if (emailConfig.transport === 'none') app.log.warn({ event: 'email_transport_not_configured' });
   let publicReadLimiter = null;
   let malformedUrlLimiter = null;
   const securityHeaders = createSecurityHeaders();
@@ -304,6 +325,30 @@ export async function buildApp(overrides = {}) {
   const customersService = createCustomersService({ customersRepository, now });
   const manageTokensRepository = createManageTokensRepository(db);
   const reschedulesRepository = createReschedulesRepository(db);
+  // AF-18: emissor único de tokens (teto de 5 vivos), fila, transporte e worker de e-mail.
+  const tokenIssuer = createManageTokenIssuer({ manageTokensRepository, publicBaseUrl: config.publicBaseUrl });
+  const emailOutboxRepository = createEmailOutboxRepository(db);
+  const mailTransport = overrides.mailTransport || createMailTransport(emailConfig, { smtpPassword, now });
+  if (mailTransport && typeof mailTransport.init === 'function') await mailTransport.init();
+  const emailWorker = createEmailWorker({
+    db,
+    outbox: emailOutboxRepository,
+    appointmentsRepository,
+    businessesRepository,
+    customersRepository,
+    reschedulesRepository,
+    manageTokensRepository,
+    tokenIssuer,
+    mailTransport,
+    emailConfig,
+    publicBaseUrl: config.publicBaseUrl,
+    enabled: emailConfig.enabled,
+    intervalMs: emailConfig.worker.intervalMs,
+    now,
+    log: app.log,
+  });
+  // A mesma porta para a reserva e o gerenciar: a do chamador (ou a nula) mais a que acorda o worker.
+  const appointmentEvents = combineAppointmentEvents(overrides.appointmentEvents ?? noAppointmentEvents, emailWorker.events);
   // Reserva pública (AF-11). Eventos pós-commit pela porta injetável (nula por padrão).
   const appointmentsService = createAppointmentsService({
     db,
@@ -316,9 +361,11 @@ export async function buildApp(overrides = {}) {
     appointments,
     customersService,
     availabilityService,
-    appointmentEvents: overrides.appointmentEvents ?? noAppointmentEvents,
+    appointmentEvents,
     manageTokensRepository,
     reschedulesRepository,
+    tokenIssuer,
+    enqueueEmail,
     publicBaseUrl: config.publicBaseUrl,
     now,
     log: app.log,
@@ -336,13 +383,21 @@ export async function buildApp(overrides = {}) {
     reschedulesRepository,
     appointmentsService,
     availabilityService,
-    appointmentEvents: overrides.appointmentEvents ?? noAppointmentEvents,
+    appointmentEvents,
+    enqueueEmail,
     config,
     now,
     log: app.log,
   });
   // Tokens vencidos há mais de 30 dias saem no boot; uma falha não impede a subida.
   await manageService.purgeExpiredTokens();
+  // Fila de e-mails (AF-18, 5.6), também com `none`: expira as pendentes velhas e purga as terminais.
+  await emailWorker.maintenance();
+  // R16: o Fastify roda os hooks onClose na ordem INVERSA do registro. Este é registrado depois do
+  // que fecha o banco (logo após runMigrations), então o worker para ANTES de o banco fechar.
+  app.addHook('onClose', async () => emailWorker.stop());
+  // O laço só roda com o servidor ouvindo; `app.inject` nunca liga o worker sozinho.
+  app.addHook('onListen', async () => emailWorker.start());
   const authService = createAuthService({
     db,
     usersRepository,
@@ -383,6 +438,10 @@ export async function buildApp(overrides = {}) {
     reschedulesRepository,
     manageService,
     imageLimiter,
+    tokenIssuer,
+    emailOutboxRepository,
+    emailWorker,
+    mailTransport,
   });
 
   // Caminho recusado pelo @fastify/static (ex.: segmento acima de 255 bytes, que não casa

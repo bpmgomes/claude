@@ -223,3 +223,121 @@ test('AF-12: padrão de rateLimit.publicManage: 30 por minuto por IP; publicBook
   assert.deepEqual(loadConfig({}).rateLimit.publicManage, { perIp: 30 });
   assert.deepEqual(loadConfig({}).rateLimit.publicBooking, { perIp: 10 });
 });
+
+describe('AF-18: configuração de e-mail (critérios 24 e 25)', () => {
+  const MARK = 'marcador-unico-xyz-123';
+  const load = async () => (await import('../../src/config.js')).resolveEmailConfig;
+  const base = (env) => loadConfig(env);
+  const SMTP_OK = { NODE_ENV: 'production', EMAIL_TRANSPORT: 'smtp', EMAIL_FROM: 'nao-responda@agendafacil.app', SMTP_HOST: 'smtp.example.com', PUBLIC_BASE_URL: 'https://agendafacil.app' };
+
+  test('loadConfig lê as variáveis sem lançar, inclusive valores inválidos; a senha fica na raiz', () => {
+    const c = loadConfig({
+      EMAIL_TRANSPORT: 'pombo', EMAIL_FROM: 'x\r\ny', EMAIL_FROM_NAME: 'A\nB', SMTP_HOST: 'http://x', SMTP_PORT: 'abc',
+      SMTP_SECURE: 'true', SMTP_USER: 'u', SMTP_PASSWORD: MARK, EMAIL_WORKER_ENABLED: 'false', EMAIL_WORKER_INTERVAL_MS: '5',
+      EMAIL_FILE_DIR: '/tmp/emails',
+    });
+    assert.equal(c.email.transport, 'pombo');
+    assert.ok(Number.isNaN(c.email.smtp.port));
+    assert.equal(c.email.smtp.secure, true);
+    assert.equal(c.email.worker.enabled, false);
+    assert.equal(c.email.worker.intervalMs, 5);
+    assert.equal(c.smtpPassword, MARK);
+    assert.equal(JSON.stringify(c.email).includes(MARK), false);
+    const d = loadConfig({});
+    assert.equal(d.email.transport, null);
+    assert.equal(d.email.fromName, 'AgendaFácil');
+    assert.equal(d.email.fileDir, './data/emails');
+    assert.deepEqual(d.email.worker, { enabled: true, intervalMs: 15000 });
+    assert.equal(d.smtpPassword, null);
+  });
+
+  test('padrão por ambiente: development=file, test=memory, outros=none; injected ativo', async () => {
+    const resolve = await load();
+    assert.equal(resolve(base({ NODE_ENV: 'development' })).transport, 'file');
+    assert.equal(resolve(base({ NODE_ENV: 'test' })).transport, 'memory');
+    for (const env of [{}, { NODE_ENV: 'production' }, { NODE_ENV: 'staging' }]) {
+      const r = resolve(base(env));
+      assert.equal(r.transport, 'none');
+      assert.equal(r.enabled, false);
+    }
+    const inj = resolve(base({ NODE_ENV: 'production' }), { injected: true });
+    assert.equal(inj.transport, 'injected');
+    assert.equal(inj.enabled, true);
+    assert.equal(resolve(base({ EMAIL_WORKER_ENABLED: 'false' }), { injected: true }).enabled, false);
+    assert.deepEqual(inj.from, { name: 'AgendaFácil', address: 'nao-responda@agendafacil.invalid' });
+    assert.equal(inj.messageIdDomain, 'agendafacil.invalid');
+  });
+
+  test('cópia de DEV_TEST_ENVS no módulo de e-mail é igual à de config.js', async () => {
+    const { EMAIL_DEV_TEST_ENVS } = await import('../../src/modules/email/email-config.js');
+    assert.deepEqual([...EMAIL_DEV_TEST_ENVS], [...DEV_TEST_ENVS]);
+  });
+
+  test('smtp válido; porta padrão 587/465; usuário e senha juntos', async () => {
+    const resolve = await load();
+    const r = resolve(base(SMTP_OK));
+    assert.deepEqual(r.smtp, { host: 'smtp.example.com', port: 587, secure: false, user: null });
+    assert.equal(r.requireHttps, true);
+    assert.equal(r.messageIdDomain, 'agendafacil.app');
+    assert.equal(resolve(base({ ...SMTP_OK, SMTP_SECURE: 'true' })).smtp.port, 465);
+    assert.equal(resolve(base({ ...SMTP_OK, SMTP_USER: 'u', SMTP_PASSWORD: MARK })).smtp.user, 'u');
+    assert.equal(JSON.stringify(resolve(base({ ...SMTP_OK, SMTP_USER: 'u', SMTP_PASSWORD: MARK }))).includes(MARK), false);
+  });
+
+  test('toda a tabela de recusas, com mensagens fixas sem o valor recebido', async () => {
+    const resolve = await load();
+    const cases = [
+      [{ EMAIL_TRANSPORT: `pombo-${MARK}` }, /EMAIL_TRANSPORT inválido/],
+      [{ NODE_ENV: 'production', EMAIL_TRANSPORT: 'memory' }, /memory e file só são permitidos/],
+      [{ NODE_ENV: 'production', EMAIL_TRANSPORT: 'file' }, /memory e file só são permitidos/],
+      [{ EMAIL_TRANSPORT: 'memory' }, /memory e file só são permitidos/],
+      [{ ...SMTP_OK, EMAIL_FROM: undefined }, /EMAIL_FROM é obrigatório/],
+      [{ ...SMTP_OK, EMAIL_FROM: `${MARK}\r\n@x.com` }, /EMAIL_FROM é obrigatório/],
+      [{ NODE_ENV: 'test', EMAIL_TRANSPORT: 'memory', EMAIL_FROM: `${MARK}%@x.com` }, /EMAIL_FROM precisa ser/],
+      [{ ...SMTP_OK, SMTP_HOST: undefined }, /SMTP_HOST e SMTP_PORT/],
+      [{ ...SMTP_OK, SMTP_HOST: `smtp://${MARK}` }, /SMTP_HOST e SMTP_PORT/],
+      [{ ...SMTP_OK, SMTP_PORT: '0' }, /SMTP_HOST e SMTP_PORT/],
+      [{ ...SMTP_OK, SMTP_PORT: '65536' }, /SMTP_HOST e SMTP_PORT/],
+      [{ ...SMTP_OK, SMTP_PORT: `25${MARK}` }, /SMTP_HOST e SMTP_PORT/],
+      [{ ...SMTP_OK, SMTP_USER: 'u' }, /juntos/],
+      [{ ...SMTP_OK, SMTP_PASSWORD: MARK }, /juntos/],
+      [{ ...SMTP_OK, PUBLIC_BASE_URL: 'http://agendafacil.app' }, /https/],
+      [{ EMAIL_FROM_NAME: `${MARK}\r\nBcc: x` }, /EMAIL_FROM_NAME inválido/],
+      [{ EMAIL_FROM_NAME: 'x'.repeat(65) }, /EMAIL_FROM_NAME inválido/],
+      [{ EMAIL_WORKER_INTERVAL_MS: '99' }, /EMAIL_WORKER_INTERVAL_MS/],
+      [{ EMAIL_WORKER_INTERVAL_MS: '3600001' }, /EMAIL_WORKER_INTERVAL_MS/],
+      [{ NODE_ENV: 'development', EMAIL_TRANSPORT: 'file', EMAIL_FILE_DIR: './web' }, /EMAIL_FILE_DIR/],
+    ];
+    for (const [env, re] of cases) {
+      assert.throws(() => resolve(base(env), { injected: false }), (err) => re.test(err.message) && !err.message.includes(MARK), JSON.stringify(env));
+    }
+    // smtp em development aceita http (link só https fora de dev/test)
+    assert.equal(resolve(base({ ...SMTP_OK, NODE_ENV: 'development', PUBLIC_BASE_URL: 'http://localhost:3000' })).requireHttps, false);
+  });
+
+  test('mergeConfig: email raso e mailTransport descartado (não é congelado)', () => {
+    const transport = { send: async () => ({}) };
+    const merged = mergeConfig(loadConfig({}), { mailTransport: transport, email: { worker: { enabled: false, intervalMs: 200 } } });
+    assert.equal('mailTransport' in merged, false);
+    assert.equal(Object.isFrozen(transport), false);
+    assert.deepEqual(merged.email.worker, { enabled: false, intervalMs: 200 });
+    assert.equal(merged.email.fromName, 'AgendaFácil');
+  });
+
+  test('buildApp: sem smtpPassword nem o valor em app.config; e-mail resolvido em app.config.email', async () => {
+    const { buildApp } = await import('../../src/app.js');
+    const { createMemoryMailTransport } = await import('../../src/modules/email/transports/memory.js');
+    const app = await buildApp({
+      databasePath: ':memory:', conflictsTokenSecret: 'z'.repeat(40), logLevel: 'silent', smtpPassword: MARK,
+      mailTransport: createMemoryMailTransport(),
+    });
+    try {
+      assert.equal('smtpPassword' in app.config, false);
+      assert.equal(JSON.stringify(app.config).includes(MARK), false);
+      assert.equal(app.config.email.transport, 'injected');
+      assert.ok(Object.isFrozen(app.config.email));
+    } finally {
+      await app.close();
+    }
+  });
+});

@@ -49,6 +49,8 @@ export const MANAGE_TOKEN_RETENTION_DAYS = 30;
 /** Remarcações por cadeia de agendamentos (decisão 7). */
 export const RESCHEDULES_PER_CHAIN_MAX = 3;
 export const MANAGE_PATH_PREFIX = '/agendamento/';
+/** Teto de tokens VIVOS por agendamento (AF-18, critério 11; docs/security/AF-12.md item 2). */
+export const MANAGE_TOKENS_LIVE_MAX = 5;
 
 /** Mensagens fixas do gerenciar: nenhuma interpola a entrada. */
 export const MANAGE_MESSAGES = Object.freeze({

@@ -96,7 +96,8 @@ describe('migração 012 (critérios 1 e 5)', () => {
         "INSERT INTO businesses (id, owner_id, name, slug, address, phone, timezone, created_at, updated_at) VALUES (?, ?, 'N', 'antigo', 'R', '11912345678', 'America/Sao_Paulo', ?, ?)",
         [randomUUID(), owner, NOW, NOW],
       );
-      assert.deepEqual(await runMigrations(db), ['012_appointment_manage']);
+      // AF-18: a 013 (fila de e-mails) vem junto (critério 33: lista de migrações).
+      assert.deepEqual(await runMigrations(db), ['012_appointment_manage', '013_email_outbox']);
       assert.equal((await db.get('SELECT cancellation_lead_minutes AS n FROM businesses')).n, 120);
       await db.close();
     } finally {

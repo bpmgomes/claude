@@ -48,3 +48,25 @@ test('REDACT_PATHS cobre token, tokenHash, token_hash e manageUrl em 4 níveis',
     for (const path of [key, `*.${key}`, `*.*.${key}`, `*.*.*.${key}`]) assert.ok(REDACT_PATHS.includes(path), path);
   }
 });
+
+test('AF-18 (critério 26): mensagem de e-mail e credenciais SMTP saem [REDACTED] em até 4 níveis', async () => {
+  const { Writable } = await import('node:stream');
+  const { default: Fastify } = await import('fastify');
+  const lines = [];
+  const stream = new Writable({ write(chunk, _e, cb) { lines.push(chunk.toString()); cb(); } });
+  const app = Fastify({ logger: { level: 'debug', stream, redact: { paths: REDACT_PATHS, censor: '[REDACTED]' } } });
+  const SECRET = 'valor-sensivel-af18';
+  const keys = ['to', 'from', 'subject', 'text', 'html', 'attachments', 'smtpPassword', 'auth', 'manageUrl', 'token'];
+  for (const key of keys) {
+    app.log.info({ [key]: SECRET });
+    app.log.info({ a: { [key]: SECRET } });
+    app.log.info({ a: { b: { [key]: SECRET } } });
+    app.log.info({ a: { b: { c: { [key]: SECRET } } } });
+  }
+  await app.close();
+  assert.equal(lines.length, keys.length * 4);
+  for (const line of lines) {
+    assert.equal(line.includes(SECRET), false, line);
+    assert.ok(line.includes('[REDACTED]'), line);
+  }
+});

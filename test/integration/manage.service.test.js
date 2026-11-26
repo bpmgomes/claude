@@ -568,7 +568,7 @@ describe('eventos (critério 38)', () => {
   beforeEach(() => setup());
   afterEach(() => app.close());
 
-  test('cancelled só com ids e rescheduled com manageUrl, depois do COMMIT; nada em 409, repetição e nada muda', async () => {
+  test('cancelled e rescheduled só com ids (AF-18: sem manageUrl), depois do COMMIT; nada em 409, repetição e nada muda', async () => {
     const received = [];
     const appointmentEvents = {
       async cancelled(event) {
@@ -592,9 +592,8 @@ describe('eventos (critério 38)', () => {
     await tick();
     assert.deepEqual(received.map((r) => r.name), ['rescheduled', 'cancelled']);
     const [resc, canc] = received;
-    assert.deepEqual(Object.keys(resc.event).sort(), ['appointmentId', 'businessId', 'manageUrl', 'previousAppointmentId']);
+    assert.deepEqual(Object.keys(resc.event).sort(), ['appointmentId', 'businessId', 'previousAppointmentId']);
     assert.equal(resc.event.previousAppointmentId, r2.id);
-    assert.equal(resc.event.manageUrl, `https://agendafacil.app/agendamento/${t2}`);
     assert.equal(resc.row.status, 'confirmed');
     assert.deepEqual(canc.event, { appointmentId: r1.id, businessId });
     assert.equal(canc.row.status, 'cancelled');

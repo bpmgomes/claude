@@ -67,6 +67,28 @@ export function createManageTokensRepository(db) {
       );
     },
 
+    /**
+     * Teto de tokens VIVOS por agendamento (AF-18, critério 11; docs/security/AF-12.md item 2): apaga
+     * os vivos (`expires_at > agora`, revogados ou não) além dos `keep` mais novos, contando o
+     * `exceptHash` (o recém-emitido, sempre mantido). Apagar, e não revogar: um revogado ainda abriria
+     * a página como "cancelado" (AF-18, decisão 2). `rowid` desempata tokens do mesmo milissegundo.
+     * @returns {Promise<{ changes: number }>}
+     */
+    async trimLive(businessId, appointmentId, { keep, nowIso, exceptHash }, conn = db) {
+      return conn.run(
+        `DELETE FROM appointment_manage_tokens WHERE rowid IN (
+           SELECT rowid FROM appointment_manage_tokens
+            WHERE business_id = ? AND appointment_id = ? AND expires_at > ? AND token_hash <> ?
+            ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ?)`,
+        [businessId, appointmentId, nowIso, exceptHash, Math.max(keep - 1, 0)],
+      );
+    },
+
+    /** Apaga um token pelo hash, do negócio (token de um envio de e-mail que falhou, AF-18 5.3). */
+    async deleteByHash(businessId, tokenHash, conn = db) {
+      return conn.run('DELETE FROM appointment_manage_tokens WHERE business_id = ? AND token_hash = ?', [businessId, tokenHash]);
+    },
+
     /** Um lote dos vencidos até `cutoffIso`, do negócio (purga oportunista). @returns {Promise<{ changes: number }>} */
     async purgeExpired(businessId, cutoffIso, { batch = 500 } = {}, conn = db) {
       return conn.run(

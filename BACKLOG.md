@@ -201,7 +201,7 @@ Como dono, quero marcar o atendimento como concluído ou "não compareceu" e ver
 ## E5 — Notificações
 
 ### AF-18 · E-mail de confirmação
-Tipo: História · Prioridade: Alta · Pontos: 3 · Status: TODO
+Tipo: História · Prioridade: Alta · Pontos: 3 · Status: DONE
 
 Como cliente final, quero receber um e-mail ao agendar, cancelar ou remarcar.
 

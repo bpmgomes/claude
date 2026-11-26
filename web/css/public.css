@@ -387,6 +387,7 @@ section h2 {
 }
 
 .pp-success-phone { margin: 0; overflow-wrap: anywhere; }
+.pp-success-email { margin: 0; }
 
 .pp-success-phone-link {
   display: inline-flex;

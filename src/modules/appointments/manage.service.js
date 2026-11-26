@@ -24,7 +24,9 @@ import {
   RescheduleLimitReachedError,
 } from '../../http/errors.js';
 import { ExclusionViolationError, UniqueViolationError } from '../../db/errors.js';
-import { hashManageToken, manageUrlOf, appointmentVersionOf } from './manage-token.js';
+import { hashManageToken, appointmentVersionOf } from './manage-token.js';
+import { enqueueEmail as enqueueEmailDefault } from '../email/enqueue-email.js';
+import { EMAIL_KIND_CANCELLED, EMAIL_KIND_RESCHEDULED } from '../email/email-rules.js';
 import { toPublicManage, toPublicManageAvailability } from './manage.view.js';
 import { noAppointmentEvents, emitAfterCommit } from './appointment-events-port.js';
 
@@ -76,6 +78,7 @@ function isBusinessError(err) {
  *   appointmentsService: { bookSlot: Function, lockForBooking: Function },
  *   availabilityService: { findForReschedule: Function, findSuggestions: Function },
  *   appointmentEvents?: import('./appointment-events-port.js').AppointmentEventsPort,
+ *   enqueueEmail?: typeof enqueueEmailDefault,   // fila de e-mails na tx (AF-18)
  *   config: { publicBaseUrl: string },
  *   now?: () => Date,
  *   log?: { info: Function, warn: Function, error: Function },
@@ -92,6 +95,7 @@ export function createManageService({
   appointmentsService,
   availabilityService,
   appointmentEvents = noAppointmentEvents,
+  enqueueEmail = enqueueEmailDefault,
   config,
   now = () => new Date(),
   log = noopLog,
@@ -284,8 +288,15 @@ export function createManageService({
             throw new AppointmentNotChangeableError();
           }
           await manageTokensRepository.revokeForAppointment(business.id, row.id, 'cancelled', nowIso, tx);
+          // AF-18 (critérios 3 e 6): o e-mail de cancelamento nasce NESTA transação, como última escrita.
+          const email = await enqueueEmail(tx, {
+            kind: EMAIL_KIND_CANCELLED,
+            businessId: business.id,
+            appointmentId: row.id,
+            nowIso,
+          });
           const updated = { ...current, row: await appointmentsRepository.findById(row.id, business.id, tx) };
-          return { repeated: false, current: updated, body: await summaryOf(updated, nowMs, tx) };
+          return { repeated: false, current: updated, email, body: await summaryOf(updated, nowMs, tx) };
         });
       } catch (err) {
         if (isBusinessError(err)) throw err;
@@ -296,6 +307,7 @@ export function createManageService({
         log.info({ event: 'appointment_cancel_repeated', businessId: business.id, appointmentId: row.id });
       } else {
         log.info({ event: 'appointment_cancelled', businessId: business.id, appointmentId: row.id });
+        if (outcome.email.enqueued) log.info({ event: 'email_enqueued', outboxId: outcome.email.id, kind: EMAIL_KIND_CANCELLED });
         emitAfterCommit(appointmentEvents, 'cancelled', { appointmentId: row.id, businessId: business.id }, log);
       }
       return { status: 200, body: outcome.body };
@@ -421,9 +433,17 @@ export function createManageService({
             tx,
           );
           if (moved.changes === 0) throw new AppointmentNotChangeableError();
+          // 13. AF-18 (critérios 3 e 6): o e-mail de remarcação nasce NESTA transação, como última escrita.
+          const email = await enqueueEmail(tx, {
+            kind: EMAIL_KIND_RESCHEDULED,
+            businessId: business.id,
+            appointmentId: booked.appointmentId,
+            previousAppointmentId: row.id,
+            nowIso,
+          });
           const next = await appointmentsRepository.findById(booked.appointmentId, business.id, tx);
           const updated = { ...current, row: next };
-          return { noop: false, booked, previous: row, current: updated, body: await summaryOf(updated, nowMs, tx) };
+          return { noop: false, booked, previous: row, current: updated, email, body: await summaryOf(updated, nowMs, tx) };
         });
       } catch (err) {
         // O ROLLBACK já devolveu o antigo a `confirmed`.
@@ -462,15 +482,12 @@ export function createManageService({
         professionalId: booked.professional.id,
         target: ctx.target === ANY_PROFESSIONAL ? 'any' : 'professional',
       });
+      if (outcome.email.enqueued) log.info({ event: 'email_enqueued', outboxId: outcome.email.id, kind: EMAIL_KIND_RESCHEDULED });
+      // Só ids (AF-18, decisão 3): a porta apenas acorda o worker; o e-mail leva um token novo.
       emitAfterCommit(
         appointmentEvents,
         'rescheduled',
-        {
-          previousAppointmentId: previous.id,
-          appointmentId: booked.appointmentId,
-          businessId: business.id,
-          manageUrl: manageUrlOf(publicBaseUrl, token),
-        },
+        { previousAppointmentId: previous.id, appointmentId: booked.appointmentId, businessId: business.id },
         log,
       );
       return { status: 200, body: outcome.body };

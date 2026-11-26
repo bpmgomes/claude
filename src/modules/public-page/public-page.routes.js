@@ -115,7 +115,7 @@ export default async function publicPageRoutes(app) {
       const page = await service().getPage(parsed.slug);
       if (!page) return sendNotFoundPage(reply);
 
-      const body = renderPublicPage(page);
+      const body = renderPublicPage(page, { emailEnabled: Boolean(app.config.email?.enabled) });
       const etag = etagOf(body);
       reply.header('ETag', etag);
       if (matchesEtag(request.headers['if-none-match'], etag)) {

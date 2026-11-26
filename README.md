@@ -54,6 +54,16 @@ Toda a configuração vem de variáveis de ambiente, lidas por `loadConfig` em `
 | `LOG_LEVEL` | `info` | Nível de log. |
 | `CONFLICTS_TOKEN_SECRET` | – | Segredo (mínimo de 32 caracteres) do HMAC-SHA256 do `conflictsToken` dos bloqueios (AF-11). **Obrigatório em produção**: sem ele, ou com menos de 32 caracteres, a aplicação não inicia (a mensagem nunca mostra o valor). Só com `NODE_ENV=development` ou `NODE_ENV=test` um segredo aleatório é gerado no boot (log `conflicts_token_secret_generated`), e os tokens emitidos deixam de valer ao reiniciar. Use o mesmo valor em todos os processos. Gere com `openssl rand -base64 32`. |
 | `NODE_ENV` | – | Só `development` e `test` aceitam `COOKIE_SECURE=false` e a ausência de `CONFLICTS_TOKEN_SECRET`. |
+| `EMAIL_TRANSPORT` | ver abaixo | Transporte do e-mail de confirmação (AF-18): `smtp`, `none`, e só com `NODE_ENV` `development`/`test`, `memory` ou `file`. Sem a variável: `file` em `development`, `memory` em `test` e `none` em qualquer outro caso (inclusive produção, com o aviso `email_transport_not_configured` no boot). |
+| `EMAIL_FROM` | `nao-responda@agendafacil.invalid` | Endereço do remetente. **Obrigatório** com `smtp`. |
+| `EMAIL_FROM_NAME` | `AgendaFácil` | Nome exibido no `From` (até 64 caracteres, sem caractere de controle). |
+| `EMAIL_FILE_DIR` | `./data/emails` | Só para `file`. Precisa ficar (pelo caminho real) dentro de `data/` ou fora do repositório, e nunca em `UPLOADS_DIR`. |
+| `SMTP_HOST` | – | Host do provedor (sem esquema). Obrigatório com `smtp`. |
+| `SMTP_PORT` | `465` com `SMTP_SECURE=true`, senão `587` | Porta SMTP. |
+| `SMTP_SECURE` | `false` | `true`: TLS implícito; `false`: STARTTLS **obrigatório** (nunca texto puro). Certificado sempre validado, TLS 1.2 ou mais. |
+| `SMTP_USER` / `SMTP_PASSWORD` | – | Credenciais, as duas juntas ou nenhuma. A senha nunca vai para `app.config` nem para log. |
+| `EMAIL_WORKER_ENABLED` | `true` | Liga o laço do worker de e-mail (só roda com o servidor ouvindo). |
+| `EMAIL_WORKER_INTERVAL_MS` | `15000` | Intervalo do laço, de 100 a 3.600.000. As escritas acordam o worker na hora; o intervalo é só a rede de segurança. |
 
 ### Processamento de imagem e mídia
 
@@ -76,7 +86,18 @@ PUBLIC_BASE_URL=https://agendafacil.app
 UPLOADS_DIR=/var/lib/agendafacil/uploads   # volume persistente, com backup
 CONFLICTS_TOKEN_SECRET=<openssl rand -base64 32>   # obrigatório; o mesmo em todos os processos
 # COOKIE_SECURE não definido (fica true)
+EMAIL_TRANSPORT=smtp
+EMAIL_FROM=nao-responda@seu-dominio
+SMTP_HOST=<host do provedor>
+SMTP_USER=<usuário>       # e SMTP_PASSWORD no gerenciador de segredos, nunca no repositório
 ```
+
+Checklist de deploy do e-mail (AF-18):
+
+- `EMAIL_TRANSPORT=smtp` e `EMAIL_FROM` definidos; sem eles a aplicação sobe, **não envia nada** e loga `email_transport_not_configured` (a tela de sucesso deixa de prometer o e-mail).
+- `PUBLIC_BASE_URL` com `https://` (com `smtp` fora de dev/test, o boot recusa `http`): os links dos e-mails usam essa base.
+- O proxy não registra o caminho de `/agendamento/*` (o link do e-mail tem o token).
+- `.env.example` lista só os nomes das variáveis. SPF, DKIM, DMARC e a escolha do provedor ficam fora deste item e dependem do dono do produto.
 
 ### Desenvolvimento local
 
@@ -169,12 +190,12 @@ Chrome e Firefox aceitam cookie `Secure` em `http://localhost`. Em outro navegad
 - Tudo numa transação (`BEGIN IMMEDIATE`): trava o serviço e depois os profissionais em ordem de `id` (a reserva nunca trava `businesses`), cria ou reaproveita o cliente, recalcula a disponibilidade com o motor do AF-10 e grava `appointments` com o snapshot do serviço (nome, duração, preço) e do cliente (nome, telefone). Qualquer erro desfaz tudo, inclusive o cliente criado. Em "qualquer profissional", fica com o livre com menos agendamentos no dia local, depois o menor `name_key`, depois o menor `id`.
 - **A garantia contra dois agendamentos sobrepostos do mesmo profissional está no banco** (migração `010_appointments.sql`): os triggers `appointments_no_overlap_insert` e `appointments_no_overlap_update` recusam (`RAISE(ABORT, 'appointments_no_overlap')`, traduzido para `ExclusionViolationError`) qualquer agendamento não cancelado que intersecte outro do mesmo profissional em `[início, fim)`, e o índice único parcial `appointments_professional_id_starts_at_unique` recusa o mesmo início. Valem para qualquer conexão, inclusive SQL direto. A migração `011_appointments_trigger_index.sql` (AF-22) cria o índice parcial `appointments_professional_id_ends_at_active_idx` (`professional_id, ends_at`, só não cancelados), usado pelos triggers para ler só os agendamentos que terminam depois do novo início, e não o histórico inteiro do profissional. `CHECK`s garantem `ends_at = starts_at + duration_minutes`, duração de 15 a 480 min e `status`/`cancelled_at` coerentes. No PostgreSQL o equivalente é `EXCLUDE USING gist (professional_id WITH =, tstzrange(starts_at, ends_at, '[)') WITH &&) WHERE (status <> 'cancelled')` (erro `23P01`).
 - **SQLite: uma conexão por processo.** O adapter enfileira as transações; vários processos sobre o mesmo arquivo (WAL) se serializam pelo `BEGIN IMMEDIATE` com `busy_timeout` de 5 s. Não abra uma segunda conexão do adapter no mesmo processo.
-- Ordem das travas em todo o sistema: `businesses` (só quem já travava), `services`, `professionals` (por `id`), `appointments`, e por último `appointment_manage_tokens`/`appointment_reschedules` (AF-12). Remover profissional com agendamento futuro dá 409 `PROFESSIONAL_HAS_FUTURE_APPOINTMENTS` (`futureAppointmentsCount`); desativar serviço e trocar a grade informam `futureAppointmentsCount`/`affectedAppointmentsCount` (só aviso, nada é cancelado; acima de 1.000 agendamentos a tela diz "pelo menos 1.000").
+- Ordem das travas em todo o sistema: `businesses` (só quem já travava), `services`, `professionals` (por `id`), `appointments`, `appointment_manage_tokens`/`appointment_reschedules` (AF-12) e por último `email_outbox` (AF-18: a fila é sempre a última escrita da transação; nenhum caminho trava a fila e depois outra tabela). Remover profissional com agendamento futuro dá 409 `PROFESSIONAL_HAS_FUTURE_APPOINTMENTS` (`futureAppointmentsCount`); desativar serviço e trocar a grade informam `futureAppointmentsCount`/`affectedAppointmentsCount` (só aviso, nada é cancelado; acima de 1.000 agendamentos a tela diz "pelo menos 1.000").
 - Porta de eventos (`src/modules/appointments/appointment-events-port.js`), chamada depois do `COMMIT`, sem `await`; falha, demora ou método ausente na porta só geram o log `appointment_event_failed` (com `eventName`) e não mudam a resposta. Padrão: implementação nula. Contrato para o AF-18 (e-mail):
-  - `confirmed({ appointmentId, businessId, manageUrl })` na reserva (não na repetição idempotente);
+  - `confirmed({ appointmentId, businessId })` na reserva (não na repetição idempotente);
   - `cancelled({ appointmentId, businessId })` no cancelamento pelo link (não na repetição);
-  - `rescheduled({ previousAppointmentId, appointmentId, businessId, manageUrl })` na remarcação (não em 409 nem em "nada muda").
-  `manageUrl` tem o token em texto puro: só em memória; o AF-18 não deve gravá-lo nem logá-lo (recomendação: outbox gravada na mesma transação, com o link montado no envio).
+  - `rescheduled({ previousAppointmentId, appointmentId, businessId })` na remarcação (não em 409 nem em "nada muda").
+  Os eventos levam **só ids** (AF-18) e servem para acordar o worker de e-mail; a garantia de entrega é a fila gravada na transação (abaixo). `combineAppointmentEvents(...portas)` repassa cada evento a várias portas.
 - Logs: `appointment_created`, `appointment_replayed`, `appointment_slot_taken`, `appointment_limit_reached`, `appointment_booking_failed` e `appointment_suggestions_failed`, só com ids e códigos; nome, telefone e e-mail nunca.
 - O cliente cancela e remarca pelo link (AF-12, abaixo). O dono ainda não cancela pela interface até o AF-14; até lá, é operação de suporte no banco: `UPDATE appointments SET status = 'cancelled', cancelled_at = <agora ISO>, updated_at = <agora ISO> WHERE id = ? AND business_id = ? AND status = 'confirmed'` (e, para o link parar de alterar, `UPDATE appointment_manage_tokens SET revoked_at = <agora ISO>, revoked_reason = 'cancelled' WHERE appointment_id = ? AND business_id = ? AND revoked_at IS NULL`). Não haverá deploy sem aprovação do dono do produto.
 
@@ -207,6 +228,19 @@ Chrome e Firefox aceitam cookie `Secure` em `http://localhost`. Em outro navegad
 
 - Logs: `appointment_cancelled`, `appointment_cancel_repeated`, `appointment_rescheduled`, `appointment_reschedule_noop`, `appointment_change_refused` (com `reason`), `appointment_manage_failed` e `manage_tokens_purged`, só com ids e códigos. O `url` das requisições de `/agendamento/*` e `/api/public/manage/*` sai no log como `[REDACTED]` (sem query), e as chaves `token`, `tokenHash`, `token_hash` e `manageUrl` são removidas.
 - **Proxy e CDN**: o token está no caminho da URL. Configure o proxy reverso (nginx, load balancer, CDN) para **não registrar** o caminho de `/agendamento/*` e `/api/public/manage/*` nos access logs (ou para mascarar o segmento do token), e não ponha cache nessas rotas (elas já respondem `no-store`).
+
+## E-mail de confirmação (AF-18)
+
+- **E-mail canônico**: todo e-mail (cliente e conta do dono) é gravado com trim, NFC, minúsculas e o domínio em ASCII pelo mapeamento UTS-46 (`ｅｘａｍｐｌｅ.ｃｏｍ` vira `example.com`, `bücher.de` vira `xn--bcher-kva.de`); domínio que não converte é recusado. Variantes da mesma caixa são o mesmo cliente para o limite de 3 futuros e para o teto de e-mails.
+
+- Três e-mails para o cliente: confirmação (reserva), cancelamento (pelo link) e remarcação ("Antes" e "Agora"), com texto e HTML em pt-BR, no fuso do negócio, e um anexo `agendamento.ics` (`METHOD:PUBLISH`, ou `METHOD:CANCEL` no cancelamento; o mesmo `UID` em toda a cadeia de remarcações, `SEQUENCE` = posição na cadeia). Nada vai para o dono.
+- **Fila transacional** (`email_outbox`, migração `013_email_outbox.sql`): a reserva, o cancelamento e a remarcação gravam a linha na **mesma transação** do fluxo, pelo ponto único `enqueueEmail(tx, { kind, businessId, appointmentId, previousAppointmentId?, nowIso })` (`src/modules/email/enqueue-email.js`, `INSERT … ON CONFLICT DO NOTHING`; nenhum outro código faz `INSERT INTO email_outbox`). ROLLBACK não deixa linha; replay idempotente, clique duplo e repetição não enfileiram de novo. A linha guarda **só ids**: nada de e-mail, nome, link ou token.
+- **Estados**: `pending` → `sending` (reivindicada por `UPDATE` condicional com `changes === 1` e arrendamento de 5 min) → `sent`, `pending` de novo (falha temporária), `failed` (permanente, tentativas esgotadas ou destinatário inválido), `skipped` (o agendamento mudou: `not_confirmed`, `not_cancelled`, `ended`, `missing`, ou `recipient_limited`, o teto de 10 e-mails por destinatário em 24 h somando todos os negócios, que conta também as tentativas que podem ter sido entregues) ou `expired` (7 dias pendente). No máximo **5 envios** por linha, com atrasos de 1 min, 5 min, 30 min e 2 h (mais até 20% de jitter). Linhas terminais são apagadas em 30 dias, em lotes.
+- **Pelo menos uma vez**: se o processo cair entre o aceite do servidor SMTP e o registro do envio, o e-mail sai de novo, com o **mesmo** `Message-ID`. O e-mail nunca atrasa nem muda a resposta das rotas: o envio roda fora de transação, com teto de 60 s, e falha do transporte só vira log.
+- **Link de gerenciar**: cada envio emite um token novo do AF-12 (o link da tela de sucesso continua valendo). Há no máximo **5 tokens vivos por agendamento**: o emissor único apaga os mais antigos. Um envio que falhou sem chance de ter sido entregue apaga o token dele.
+- **Adaptadores**: `smtp` (produção), `none` (não envia; a linha fica `pending` até expirar), e só em dev/test `memory` (lista em memória, para testes) e `file`, que grava cada mensagem como `.eml` em `EMAIL_FILE_DIR` (diretório `0o700`, arquivos `0o600`, `.eml` com mais de 30 dias apagados no boot). **Os `.eml` contêm dado pessoal do cliente em claro**: não os compartilhe nem os versione (o padrão fica em `data/`, que está no `.gitignore`).
+- Logs: `email_enqueued`, `email_sent`, `email_retry`, `email_failed`, `email_skipped`, `email_lease_lost`, `email_expired`, `email_outbox_purged`, `email_worker_failed` e `email_transport_misconfigured` (em `error`: autenticação, remetente ou TLS do SMTP, tratados como falha temporária para não descartar a fila enquanto a configuração é corrigida), só com id da linha, `kind`, tentativa e `errCode`/`errName`. Endereço, nome, assunto, corpo, link e token nunca.
+- Testes: nenhuma rede real (adaptador de memória e um servidor SMTP falso em processo, `smtp-server`, com o certificado de teste de `test/fixtures/smtp/`, que não é segredo).
 
 ## CI
 

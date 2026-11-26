@@ -31,6 +31,19 @@ export function createReschedulesRepository(db) {
     },
 
     /**
+     * Agendamento que foi remarcado para criar `appointmentId` (o anterior da cadeia), ou null
+     * (AF-18: raiz da cadeia para o UID do .ics).
+     * @returns {Promise<string|null>}
+     */
+    async previousOf(appointmentId, businessId, conn = db) {
+      const row = await conn.get(
+        'SELECT previous_appointment_id FROM appointment_reschedules WHERE appointment_id = ? AND business_id = ?',
+        [appointmentId, businessId],
+      );
+      return row ? row.previous_appointment_id : null;
+    },
+
+    /**
      * @throws {import('../../db/errors.js').UniqueViolationError}
      *   `appointment_reschedules_previous_appointment_id_unique` (o antigo já foi remarcado) ou
      *   `appointment_reschedules_appointment_id_unique`

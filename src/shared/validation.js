@@ -45,13 +45,45 @@ const PHONE_ALLOWED = /^[0-9\s().+-]*$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
- * trim + NFC + minúsculas (AF-11, decisão 15): o mesmo endereço em forma composta e decomposta
- * vira uma chave só (clientes do AF-04 e contas do dono do AF-01).
+ * Delimitadores de URL, '%' e brancos: o analisador de host do WHATWG cortaria ou decodificaria
+ * (`a/b.com` -> `a`, `ex%2ecom` -> `ex.com`), então o domínio que os contém é recusado.
+ */
+const DOMAIN_UNSAFE = /[/\\?#:@[\]%\s]/u;
+
+/**
+ * Domínio canônico do e-mail (AF-18, M1): mapeamento UTS-46 com saída ASCII (punycode) e minúsculas,
+ * o mesmo de `domainToASCII` do Node (ambos são o analisador de host do WHATWG URL; este módulo
+ * roda também no navegador, por isso usa `URL`). `ｅｘａｍｐｌｅ.ｃｏｍ`, `EXAMPLE.com` e
+ * `example.com` dão `example.com`; `bücher.de` dá `xn--bcher-kva.de`. Idempotente.
+ * @param {string} domain
+ * @returns {string|null} null se a conversão falha, o domínio tem delimitador de URL ou rótulo vazio
+ */
+export function canonicalEmailDomain(domain) {
+  if (typeof domain !== 'string' || domain.length === 0 || DOMAIN_UNSAFE.test(domain)) return null;
+  let ascii;
+  try {
+    ascii = new URL(`http://${domain}/`).hostname;
+  } catch {
+    return null;
+  }
+  if (!ascii || ascii.split('.').some((label) => label.length === 0)) return null;
+  return ascii;
+}
+
+/**
+ * trim + NFC + minúsculas (AF-11, decisão 15), e o domínio canônico (AF-18, M1): o mesmo endereço em
+ * forma composta e decomposta, em largura total ou em punycode vira uma chave só (clientes do AF-04,
+ * teto por destinatário do AF-18 e contas do dono do AF-01). A parte local só tem NFC e minúsculas.
+ * Domínio que não converte fica como veio (minúsculo): `validateEmail` o recusa.
  * @returns {string}
  */
 export function normalizeEmail(raw) {
   if (typeof raw !== 'string') return '';
-  return raw.trim().normalize('NFC').toLowerCase();
+  const email = raw.trim().normalize('NFC').toLowerCase();
+  const at = email.lastIndexOf('@');
+  if (at < 0) return email;
+  const domain = canonicalEmailDomain(email.slice(at + 1));
+  return domain === null ? email : `${email.slice(0, at + 1)}${domain}`;
 }
 
 /** @returns {string|null} */
@@ -266,6 +298,8 @@ export function validateEmail(raw) {
   const email = normalizeEmail(raw);
   if (email.length === 0) return MESSAGES.emailRequired;
   if (email.length > EMAIL_MAX || !EMAIL_RE.test(email)) return MESSAGES.emailInvalid;
+  // Domínio que não converte (UTS-46) é recusado (AF-18, M1).
+  if (canonicalEmailDomain(email.slice(email.lastIndexOf('@') + 1)) === null) return MESSAGES.emailInvalid;
   return null;
 }
 

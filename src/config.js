@@ -53,6 +53,19 @@ import { randomBytes } from 'node:crypto';
  *   `NODE_ENV` em `DEV_TEST_ENVS`; a checagem é de `resolveConflictsTokenSecret`, chamada pelo
  *   `buildApp` (esta função só lê o valor e nunca lança por causa dele).
  * - `nodeEnv` (`NODE_ENV`, só leitura): `null` quando ausente.
+ * - E-mail (AF-18, design 2.1). Esta função só LÊ (string ou `null`) e nunca lança por causa do
+ *   e-mail; quem decide o transporte e valida é `resolveEmailConfig`, chamada pelo `buildApp`:
+ *   - `email.transport` (`EMAIL_TRANSPORT`: `memory`, `file`, `smtp` ou `none`; `null` = padrão do
+ *     ambiente: `file` em development, `memory` em test, `none` nos outros).
+ *   - `email.from` (`EMAIL_FROM`): endereço "não responda" do sistema; obrigatório com `smtp`.
+ *   - `email.fromName` (`EMAIL_FROM_NAME`, padrão `AgendaFácil`): nome exibido no `From`.
+ *   - `email.fileDir` (`EMAIL_FILE_DIR`, padrão `./data/emails`): só para `file`.
+ *   - `email.smtp` (`SMTP_HOST`, `SMTP_PORT` (465 com `SMTP_SECURE=true`, senão 587), `SMTP_SECURE`
+ *     (`false`: STARTTLS obrigatório), `SMTP_USER`).
+ *   - `smtpPassword` (`SMTP_PASSWORD`, na raiz, como `conflictsTokenSecret`): NUNCA vai para
+ *     `app.config` nem para log.
+ *   - `email.worker` (`EMAIL_WORKER_ENABLED`, padrão true; `EMAIL_WORKER_INTERVAL_MS`, padrão 15000,
+ *     de 100 a 3.600.000).
  *
  * @param {Record<string, string|undefined>} env
  * @throws {Error} se `COOKIE_SECURE=false` com `NODE_ENV` fora de `COOKIE_INSECURE_ENVS`
@@ -111,9 +124,29 @@ export function loadConfig(env = process.env) {
       ? env.CONFLICTS_TOKEN_SECRET
       : null,
     nodeEnv: typeof env.NODE_ENV === 'string' && env.NODE_ENV !== '' ? env.NODE_ENV : null,
+    email: {
+      transport: optionalString(env.EMAIL_TRANSPORT),
+      from: optionalString(env.EMAIL_FROM),
+      fromName: optionalString(env.EMAIL_FROM_NAME) ?? 'AgendaFácil',
+      fileDir: env.EMAIL_FILE_DIR || './data/emails',
+      smtp: {
+        host: optionalString(env.SMTP_HOST),
+        // Número como veio (NaN se não for número): a validação é do resolveEmailConfig.
+        port: optionalString(env.SMTP_PORT) === null ? null : Number(env.SMTP_PORT),
+        secure: env.SMTP_SECURE !== undefined ? toBool(env.SMTP_SECURE) : false,
+        user: optionalString(env.SMTP_USER),
+      },
+      worker: {
+        enabled: env.EMAIL_WORKER_ENABLED !== undefined ? toBool(env.EMAIL_WORKER_ENABLED) : true,
+        intervalMs: optionalString(env.EMAIL_WORKER_INTERVAL_MS) === null ? 15_000 : Number(env.EMAIL_WORKER_INTERVAL_MS),
+      },
+    },
+    smtpPassword: optionalString(env.SMTP_PASSWORD),
   };
   return deepFreeze(config);
 }
+
+export { resolveEmailConfig } from './modules/email/email-config.js';
 
 /** Ambientes de desenvolvimento e teste (comparação exata). */
 export const DEV_TEST_ENVS = Object.freeze(['development', 'test']);
@@ -172,23 +205,30 @@ export function parseTrustProxy(value) {
 }
 
 /**
- * Combina a config base com overrides (merge raso, exceto `rateLimit`, `loginLock` e
- * `imageProcessing`). `logStream`, `now`, `storage`, `imageLimiter` e `appointmentEvents` não
- * fazem parte da config e são descartados.
+ * Combina a config base com overrides (merge raso, exceto `rateLimit`, `loginLock`,
+ * `imageProcessing` e `email`). `logStream`, `now`, `storage`, `imageLimiter`, `appointmentEvents` e
+ * `mailTransport` (AF-18) não fazem parte da config e são descartados. Em `email`, o merge também é
+ * raso: quem sobrescreve `email.worker` passa o objeto inteiro.
  * Dentro de `rateLimit` o merge também é raso: quem sobrescreve `rateLimit.logoUpload`
  * passa o objeto inteiro.
  */
 export function mergeConfig(base, overrides = {}) {
   // eslint-disable-next-line no-unused-vars
-  const { logStream, now, storage, imageLimiter, appointmentEvents, ...rest } = overrides;
+  const { logStream, now, storage, imageLimiter, appointmentEvents, mailTransport, ...rest } = overrides;
   const merged = {
     ...base,
     ...rest,
     rateLimit: { ...base.rateLimit, ...(rest.rateLimit || {}) },
     loginLock: { ...base.loginLock, ...(rest.loginLock || {}) },
     imageProcessing: { ...base.imageProcessing, ...(rest.imageProcessing || {}) },
+    email: { ...(base.email || {}), ...(rest.email || {}) },
   };
   return deepFreeze(merged);
+}
+
+/** String não vazia, ou null. */
+function optionalString(value) {
+  return typeof value === 'string' && value !== '' ? value : null;
 }
 
 function parseList(value) {
