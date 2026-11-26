@@ -17,7 +17,8 @@ import {
   postTimeBlock,
   WEEK_9_TO_18,
 } from '../helpers/session.js';
-import { bookingBody, postAppointment, countAppointments } from '../helpers/appointments.js';
+import { bookingBody, postAppointment, countAppointments, cancelDirect } from '../helpers/appointments.js';
+import { SlotUnavailableError } from '../../src/http/errors.js';
 import { countCustomers } from '../helpers/customers.js';
 
 // Quinta 26/11/2026, 09:00 em São Paulo.
@@ -168,6 +169,106 @@ describe('concorrência no mesmo processo (critérios 19 a 23 e 25)', () => {
     assert.equal(new Set(responses.map((r) => r.body)).size, 1);
     assert.equal(await countAppointments(app.db), 1);
   });
+});
+
+/** Instante UTC de um início local de São Paulo (UTC-3, sem horário de verão). */
+const utcOf = (local) => new Date(Date.parse(`${local}:00.000Z`) + 3 * 3_600_000).toISOString();
+const activeAt = async (startsAt) =>
+  (await app.db.all("SELECT id FROM appointments WHERE professional_id = ? AND starts_at = ? AND status <> 'cancelled'", [pa.id, startsAt])).map(
+    (r) => r.id,
+  );
+
+describe('AF-22: cancelar, reservar e bookSlot direto (critérios 8 a 10)', () => {
+  beforeEach(setup);
+  afterEach(() => app.close());
+
+  test('cancelar e reservar ao mesmo tempo, 10 rodadas alternando quem entra primeiro: 201 ou 409 SLOT_UNAVAILABLE, no máximo 1 não cancelado e os dois ramos ocorrem', async () => {
+    /**
+     * Com o POST primeiro, o cancelamento só é enfileirado quando a transação da reserva já está na
+     * fila do adapter (FIFO): o recheck e o trigger ainda veem o agendamento ativo. Sem esse gancho,
+     * o `inject` é assíncrono e o cancelamento entra sempre antes, mesmo com o POST antes no Promise.all.
+     */
+    const postFirst = (start, cancelledId) => {
+      let cancelled;
+      const original = app.db.transaction;
+      app.db.transaction = function hooked(fn) {
+        app.db.transaction = original;
+        const result = original.call(this, fn);
+        cancelled = cancelDirect(app.db, cancelledId);
+        return result;
+      };
+      const posted = request({ start }).finally(() => {
+        app.db.transaction = original;
+      });
+      return Promise.all([posted, posted.then(() => cancelled ?? cancelDirect(app.db, cancelledId))]).then(([res]) => res);
+    };
+    const branches = { 201: 0, 409: 0 };
+    for (const [round, start] of STARTS.slice(0, 10).entries()) {
+      const first = await request({ start });
+      assert.equal(first.statusCode, 201, `${start}: ${first.body}`);
+      const startsAt = utcOf(start);
+      const [cancelledId] = await activeAt(startsAt);
+      assert.ok(cancelledId, start);
+      const second =
+        round % 2 === 0
+          ? (await Promise.all([cancelDirect(app.db, cancelledId), request({ start })]))[1]
+          : await postFirst(start, cancelledId);
+      const active = await activeAt(startsAt);
+      if (second.statusCode === 201) {
+        assert.equal(active.length, 1, start);
+        assert.notEqual(active[0], cancelledId, start);
+      } else {
+        assert.equal(second.statusCode, 409, `${start}: ${second.body}`);
+        assert.equal(second.json().error.code, 'SLOT_UNAVAILABLE');
+        assert.equal(active.length, 0, start);
+      }
+      branches[second.statusCode] += 1;
+      const cancelled = await app.db.get('SELECT status FROM appointments WHERE id = ?', [cancelledId]);
+      assert.equal(cancelled.status, 'cancelled');
+    }
+    assert.ok(branches[201] > 0 && branches[409] > 0, `os dois ramos precisam ocorrer: ${JSON.stringify(branches)}`);
+  });
+
+  for (const [label, start, extra] of [
+    ['parâmetros padrão (POST público)', '2026-11-27T10:00', {}],
+    ['parâmetros do AF-15 (leadMinutes 0, customerLimit null)', '2026-11-30T10:00', { leadMinutes: 0, customerLimit: null }],
+  ]) {
+    test(`bookSlot(tx, ...) direto com duas transações no mesmo horário, ${label}: uma conclui, a outra SlotUnavailableError, sem cliente órfão`, async () => {
+      const business = await app.db.get('SELECT id, timezone FROM businesses');
+      const before = await countCustomers(app.db);
+      const customers = [customerOf(7001 + seq), customerOf(7101 + seq)];
+      seq += 1;
+      const results = await Promise.allSettled(
+        customers.map((customerInput) =>
+          app.db.transaction((tx) =>
+            app.services.appointmentsService.bookSlot(tx, {
+              business,
+              serviceId: corte.id,
+              professionalId: pa.id,
+              start,
+              customerInput,
+              nowMs: Date.parse(NOW),
+              ...extra,
+            }),
+          ),
+        ),
+      );
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+      assert.equal(fulfilled.length, 1, JSON.stringify(results.map((r) => r.status)));
+      assert.equal(rejected.length, 1);
+      assert.ok(rejected[0].reason instanceof SlotUnavailableError, String(rejected[0].reason));
+      assert.equal(fulfilled[0].value.professional.id, pa.id);
+      assert.equal(fulfilled[0].value.startsAt, utcOf(start));
+      assert.equal((await activeAt(utcOf(start))).length, 1);
+      assert.equal(await countCustomers(app.db), before + 1);
+      const loser = customers[results.findIndex((r) => r.status === 'rejected')];
+      const winner = customers[results.findIndex((r) => r.status === 'fulfilled')];
+      const byEmail = async (email) => Number((await app.db.get('SELECT COUNT(*) AS n FROM customers WHERE email = ?', [email])).n);
+      assert.equal(await byEmail(loser.email), 0, 'cliente do perdedor não fica gravado');
+      assert.equal(await byEmail(winner.email), 1);
+    });
+  }
 });
 
 describe('concorrência entre processos sobre o mesmo arquivo SQLite (critério 19)', () => {

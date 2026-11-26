@@ -233,7 +233,7 @@ Tipo: Técnica · Prioridade: Alta · Pontos: 3 · Status: TODO
 Cobertura de testes unitários da AF-10 incluindo casos de borda: virada de dia, serviço que termina exatamente no fim do expediente, intervalo de almoço, horário de verão (caso volte a existir).
 
 ### AF-22 · 🐞 Bug: horário duplicado em agendamento simultâneo
-Tipo: Bug · Prioridade: Alta · Pontos: 3 · Status: TODO
+Tipo: Bug · Prioridade: Alta · Pontos: 3 · Status: DONE
 
 Passos para reproduzir: dois navegadores abrem o mesmo horário das 10:00 com a mesma profissional e clicam em "Confirmar" ao mesmo tempo. Esperado: apenas um agendamento criado; o outro recebe aviso. Atual: os dois agendamentos são criados.
 

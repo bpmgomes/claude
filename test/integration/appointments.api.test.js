@@ -416,6 +416,13 @@ describe('integração com o AF-10, AF-06, AF-07 e AF-08 (critérios 32 e 47)', 
     await cancelDirect(app.db, id);
     assert.ok(starts(await daySlots({ professionalId: pa.id })).includes(`${FRIDAY}T10:00`));
     assert.ok(starts(await daySlots()).includes(`${FRIDAY}T10:00`));
+    // AF-22, critério 8 (b): depois de cancelar, um novo POST de pa às 10:00 dá 201.
+    assert.equal((await post(body())).statusCode, 201);
+    const active = await app.db.get(
+      "SELECT COUNT(*) AS n FROM appointments WHERE professional_id = ? AND starts_at = ? AND status <> 'cancelled'",
+      [pa.id, '2026-11-27T13:00:00.000Z'],
+    );
+    assert.equal(Number(active.n), 1);
   });
 
   test('contrato novo do AF-10: em "qualquer" nenhum horário tem professionals; no específico continua [0]', async () => {

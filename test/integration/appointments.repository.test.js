@@ -62,6 +62,8 @@ const row = (over = {}) => ({
 });
 const insert = (over) => insertAppointmentDirect(app.db, row(over));
 const port = () => app.services.appointments;
+const countActive = async (professionalId) =>
+  Number((await app.db.get("SELECT COUNT(*) AS n FROM appointments WHERE professional_id = ? AND status <> 'cancelled'", [professionalId])).n);
 
 describe('migração 010 (critérios 8, 9 e 45)', () => {
   beforeEach(setup);
@@ -191,6 +193,20 @@ describe('não sobreposição no banco (critério 21)', () => {
     await app.db.run("UPDATE appointments SET status = 'completed' WHERE id = ?", [later]);
   });
 
+  test('controles de UPDATE que passam: mover para encostado e trocar para profissional livre (AF-22, critério 7)', async () => {
+    await insert();
+    const later = await insert({ startsAt: at('13:00') });
+    await app.db.run('UPDATE appointments SET starts_at = ?, ends_at = ? WHERE id = ?', [at('11:00'), at('12:00'), later]);
+    await app.db.run('UPDATE appointments SET professional_id = ? WHERE id = ?', [pb.id, later]);
+    const moved = await app.db.get('SELECT professional_id, starts_at, ends_at FROM appointments WHERE id = ?', [later]);
+    assert.deepEqual({ ...moved }, { professional_id: pb.id, starts_at: at('11:00'), ends_at: at('12:00') });
+    // Mesmo intervalo de pa, agora em pb (livre): também passa.
+    await app.db.run('UPDATE appointments SET starts_at = ?, ends_at = ? WHERE id = ?', [at('10:00'), at('11:00'), later]);
+    assert.equal(Number((await app.db.get("SELECT COUNT(*) AS n FROM appointments WHERE status <> 'cancelled'")).n), 2);
+    assert.equal(await countActive(pa.id), 1);
+    assert.equal(await countActive(pb.id), 1);
+  });
+
   test('com foreign_keys desligado, um business_id falso com o mesmo professional_id não escapa do trigger (QA F4)', async () => {
     await insert();
     const fake = '00000000-0000-4000-8000-000000000000';
@@ -218,6 +234,55 @@ describe('não sobreposição no banco (critério 21)', () => {
     // Sem trigger, só o mesmo início é coberto: a rede mínima não impede início diferente.
     await insert({ startsAt: at('10:30') });
   });
+});
+
+describe('índice do trigger (AF-22, critérios 11 e 12)', () => {
+  beforeEach(setup);
+  afterEach(() => app.close());
+
+  const INDEX = 'appointments_professional_id_ends_at_active_idx';
+
+  test('migração 011 cria o índice parcial (professional_id, ends_at) WHERE status <> \'cancelled\'', async () => {
+    const versions = (await app.db.all('SELECT version FROM schema_migrations')).map((r) => r.version);
+    assert.ok(versions.includes('011_appointments_trigger_index'), versions.join(', '));
+    const entry = (await app.db.all('PRAGMA index_list(appointments)')).find((i) => i.name === INDEX);
+    assert.ok(entry, 'índice ausente');
+    assert.equal(Number(entry.partial), 1);
+    assert.equal(Number(entry.unique), 0);
+    const cols = (await app.db.all(`PRAGMA index_info(${INDEX})`)).map((c) => c.name);
+    assert.deepEqual(cols, ['professional_id', 'ends_at']);
+    const { sql } = await app.db.get("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", [INDEX]);
+    assert.match(sql, /WHERE status <> 'cancelled'/);
+  });
+
+  for (const trigger of ['appointments_no_overlap_insert', 'appointments_no_overlap_update']) {
+    test(`EXPLAIN QUERY PLAN da busca de ${trigger} usa ${INDEX} (sem ANALYZE)`, async () => {
+      // Fixture: 30 passados, 5 cancelados e 1 futuro de pa.
+      await app.db.transaction(async (tx) => {
+        for (let i = 0; i < 30; i++) {
+          const startsAt = new Date(Date.parse('2026-11-20T12:00:00.000Z') + i * 15 * 60_000).toISOString();
+          await insertAppointmentDirect(tx, row({ startsAt, durationMinutes: 15 }));
+        }
+        for (let i = 0; i < 5; i++) {
+          const startsAt = new Date(Date.parse('2026-11-21T12:00:00.000Z') + i * 15 * 60_000).toISOString();
+          await insertAppointmentDirect(tx, row({ startsAt, durationMinutes: 15, status: 'cancelled' }));
+        }
+        await insertAppointmentDirect(tx, row());
+      });
+      const { sql } = await app.db.get("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?", [trigger]);
+      const match = sql.match(/EXISTS\s*\(([\s\S]*)\)\s*;\s*END\s*$/i);
+      assert.ok(match, `subconsulta não encontrada em ${trigger}`);
+      const query = match[1].replace(/\bNEW\.\w+/g, '?');
+      const params = Array.from({ length: (query.match(/\?/g) || []).length }, () => '2026-11-27T13:00:00.000Z');
+      const details = (await app.db.all(`EXPLAIN QUERY PLAN ${query}`, params)).map((r) => r.detail);
+      assert.ok(
+        details.some((d) => /USING INDEX appointments_professional_id_ends_at_active_idx \(professional_id=\? AND ends_at>\?\)/.test(d)),
+        details.join(' | '),
+      );
+      assert.ok(!details.some((d) => d.includes('appointments_professional_id_starts_at_unique')), details.join(' | '));
+      assert.ok(!details.some((d) => /\bSCAN a\b/.test(d)), details.join(' | '));
+    });
+  }
 });
 
 describe('segunda conexão no mesmo arquivo (o banco recusa sem o adapter)', () => {

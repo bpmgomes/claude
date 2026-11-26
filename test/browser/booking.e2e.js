@@ -2,6 +2,8 @@
 // 414 px, clique duplo, falha de rede com a mesma chave, 409 com sugestões mantendo os dados, dois
 // navegadores, erro por campo do servidor, XSS no painel de conflitos do dono e recarga limpa.
 // Fora do `npm test`: `npm run test:e2e`. Relógio do servidor fixo: quinta 2026-11-26, 09:00 em São Paulo.
+// Datas reservadas ao cenário literal do AF-22 (10 rodadas, 10:00 com a mesma profissional), fora das
+// usadas pelos outros casos: 2026-12-10, 11, 14, 15, 16, 17, 18, 21, 22 e 23.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadPlaywright } from './playwright.js';
@@ -63,6 +65,25 @@ async function chooseSlot(page, { date, professionalId = 'any', index = 0 }) {
   await page.locator('#bk-date').dispatchEvent('change');
   await waitReady(page);
   const slot = page.locator('.pp-slot').nth(index);
+  const label = await slot.textContent();
+  await slot.click();
+  await page.locator('#bk-customer').waitFor({ state: 'visible' });
+  return label;
+}
+
+/**
+ * Como `chooseSlot`, mas escolhe o horário pelo rótulo (`time`, ex.: "10:00"), e não pelo índice.
+ * @returns {Promise<string>} rótulo do horário clicado
+ */
+async function chooseSlotAt(page, { date, professionalId, time }) {
+  const { services } = server.data.main;
+  await page.selectOption('#bk-service', services[0].id);
+  await page.selectOption('#bk-professional', professionalId);
+  await page.fill('#bk-date', date);
+  await page.locator('#bk-date').dispatchEvent('change');
+  await waitReady(page);
+  const slot = page.locator('.pp-slot').filter({ hasText: new RegExp(`^\\s*${time}`) });
+  assert.equal(await slot.count(), 1, `um horário ${time} em ${date}`);
   const label = await slot.textContent();
   await slot.click();
   await page.locator('#bk-customer').waitFor({ state: 'visible' });
@@ -249,6 +270,93 @@ describe('confirmação do agendamento (AF-11)', () => {
     } finally {
       await first.context.close();
       await second.context.close();
+    }
+  });
+
+  test('cenário literal do backlog, 10 rodadas: dois navegadores, mesma profissional às 10:00, Confirmar ao mesmo tempo; 1 vence e o outro vê o aviso (AF-22, critérios 1 a 4)', { timeout: 30_000 }, async () => {
+    const professional = server.data.main.professionals[0];
+    const dates = ['2026-12-10', '2026-12-11', '2026-12-14', '2026-12-15', '2026-12-16', '2026-12-17', '2026-12-18', '2026-12-21', '2026-12-22', '2026-12-23'];
+    const contexts = [];
+    try {
+      const sessions = [];
+      // Barreira de rede (sem sleep): o POST de cada página só segue quando os dois chegaram.
+      let round;
+      for (const width of [360, 414]) {
+        const context = await browser.newContext({ viewport: { width, height: 800 } });
+        contexts.push(context);
+        const page = await context.newPage();
+        const session = { page, sent: [] };
+        page.on('request', (req) => {
+          if (req.url().endsWith('/appointments') && round) session.sent.push(req);
+        });
+        await page.route('**/appointments', async (route) => {
+          const current = round;
+          current.arrived += 1;
+          if (current.arrived === 2) current.release();
+          await current.gate;
+          await route.continue();
+        });
+        sessions.push(session);
+      }
+      for (const date of dates) {
+        let release;
+        round = { arrived: 0, gate: new Promise((r) => (release = r)) };
+        round.release = release;
+        for (const session of sessions) session.sent = [];
+        for (const { page } of sessions) {
+          await page.goto(`${server.baseUrl}/reserva`, { waitUntil: 'load' });
+          await chooseSlotAt(page, { date, professionalId: professional.id, time: '10:00' });
+        }
+        for (const { page } of sessions) {
+          const pressed = await page.locator('.pp-slot[aria-pressed="true"]').textContent();
+          assert.ok(pressed.trim().startsWith('10:00'), `${date}: ${pressed}`);
+          assert.equal(await page.inputValue('#bk-professional'), professional.id);
+          assert.equal((await page.locator('#bk-professional option:checked').textContent()).trim(), professional.name);
+        }
+        const customers = [customer(), customer()];
+        for (const [i, { page }] of sessions.entries()) await fillCustomer(page, customers[i]);
+
+        await Promise.all(sessions.map(({ page }) => confirmButton(page).click()));
+        const outcomes = await Promise.all(
+          sessions.map(async ({ page }) => {
+            await page.waitForFunction(() => !document.querySelector('.pp-success').hidden || !document.querySelector('.pp-alert').hidden);
+            return (await page.locator('.pp-success').isVisible()) ? 'success' : 'conflict';
+          }),
+        );
+        assert.deepEqual([...outcomes].sort(), ['conflict', 'success'], date);
+        for (const { sent } of sessions) assert.equal(sent.length, 1, `${date}: uma requisição por página`);
+        const statuses = await Promise.all(sessions.map(async ({ sent }) => (await sent[0].response()).status()));
+        assert.deepEqual([...statuses].sort(), [201, 409], date);
+
+        const winnerIndex = outcomes.indexOf('success');
+        const winner = sessions[winnerIndex].page;
+        const loser = sessions[1 - winnerIndex].page;
+        const details = await winner.locator('.pp-success-details').innerText();
+        assert.ok(details.includes('10:00'), details);
+        assert.ok(details.includes(professional.name), details);
+        const alert = loser.locator('.pp-alert');
+        assert.equal(await alert.getAttribute('role'), 'alert');
+        assert.equal(await alert.textContent(), 'Este horário acabou de ser ocupado. Escolha outro.');
+        const suggestions = loser.locator('.pp-suggestion');
+        await suggestions.first().waitFor({ state: 'visible' });
+        const shown = await suggestions.count();
+        assert.ok(shown >= 1 && shown <= 3, `${date}: ${shown} sugestões`);
+        const lost = customers[1 - winnerIndex];
+        assert.equal(await loser.inputValue('#bk-name'), lost.name);
+        assert.equal(await loser.inputValue('#bk-email'), lost.email);
+        assert.notEqual(await loser.inputValue('#bk-phone'), '');
+
+        const active = await server.app.db.get(
+          "SELECT COUNT(*) AS n FROM appointments WHERE professional_id = ? AND starts_at = ? AND status <> 'cancelled'",
+          [professional.id, `${date}T13:00:00.000Z`],
+        );
+        assert.equal(Number(active.n), 1, date);
+        const byEmail = async (email) => Number((await server.app.db.get('SELECT COUNT(*) AS n FROM customers WHERE email = ?', [email])).n);
+        assert.equal(await byEmail(customers[winnerIndex].email), 1, date);
+        assert.equal(await byEmail(lost.email), 0, `${date}: sem cliente órfão`);
+      }
+    } finally {
+      for (const context of contexts) await context.close();
     }
   });
 
