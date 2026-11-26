@@ -76,6 +76,8 @@ jobs:
         run: node --version && npm --version
       - run: npm ci
       - run: npm test
+      - name: Cobertura do motor de disponibilidade (AF-21)
+        run: node --version && npm run test:coverage:availability
 
   e2e:
     name: e2e (${{ matrix.tz }})

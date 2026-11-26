@@ -9,6 +9,7 @@ npm install      # ou: npm ci (instalação reprodutível pelo package-lock.json
 npm run dev      # ou: npm start
 npm run lint     # ESLint 9, sem regras de estilo (ver a seção CI)
 npm test
+npm run test:coverage:availability # cobertura do motor de disponibilidade, com meta (ver a seção CI)
 npm run smoke    # sobe a aplicação como em produção e confere que ela responde (ver a seção CI)
 npm run perf     # desempenho da página pública (Playwright + Chromium)
 npm run test:e2e # responsividade, acessibilidade e XSS da página pública (Playwright + Chromium)
@@ -183,7 +184,7 @@ em push para `claude/project-thread-5e1ja7` e `main`, manualmente (`workflow_dis
 | Job | PR | Push | Semanal | O que faz |
 |---|---|---|---|---|
 | `lint` | sim | sim | não | `npm run lint` |
-| `test (UTC)`, `test (Asia/Tokyo)` | sim | sim | não | `npm test` com `TZ` do job |
+| `test (UTC)`, `test (Asia/Tokyo)` | sim | sim | não | `npm test` e `npm run test:coverage:availability` com `TZ` do job |
 | `e2e (UTC)`, `e2e (Asia/Tokyo)` | sim | sim | não | `npm run test:e2e` no Chromium; em falha, a saída vai como artefato (7 dias) |
 | `build-check` | sim | sim | não | `npm run smoke` com um `CONFLICTS_TOKEN_SECRET` gerado no job |
 | `audit` | sim | sim | sim | `npm audit` (informativo) e `npm audit --omit=dev --audit-level=high` (decide o job) |
@@ -200,6 +201,8 @@ npm ci
 npm run lint
 npm test
 TZ=Asia/Tokyo npm test
+npm run test:coverage:availability
+TZ=Asia/Tokyo npm run test:coverage:availability
 npm run test:e2e
 TZ=Asia/Tokyo npm run test:e2e
 npm run smoke
@@ -223,6 +226,36 @@ npm run perf
   mesma versão (`node -p "require('playwright/package.json').version"`).
 - **Ao mudar a branch padrão do repositório, acrescente-a em `on.push.branches` do `ci.yml`.** O
   `pull_request` continua cobrindo qualquer base.
+
+### Cobertura do motor de disponibilidade (AF-21)
+
+`npm run test:coverage:availability` roda **só os testes unitários do motor**
+(`test/unit/availability-engine*.test.js`: o arquivo do AF-10, `…edge-cases.test.js` e
+`…dst.test.js`) com o executor nativo (`--experimental-test-coverage`) e mede **só**
+`src/modules/availability/availability-engine.js`. Os testes de integração ficam de fora de
+propósito, para não mascarar uma lacuna do motor. Não há meta global de cobertura do projeto.
+
+- **Metas**: 100% de linhas, ramos e funções (`--test-coverage-lines|branches|functions` no próprio
+  script), igual ao valor medido depois do AF-21 (o baseline só com o arquivo do AF-10 era
+  100/95,95/100). Quem mudar o motor precisa cobrir os ramos novos; se um ramo for defensivo e
+  inalcançável, baixar a meta só no script, com justificativa no design.
+  Abaixo da meta, o executor imprime `Error: NN% <tipo> coverage does not meet threshold of MM%` e
+  o script sai com 1, e o job `test` fica vermelho nas duas zonas.
+- **Como ler a tabela** (no fim da saída): `line %`, `branch %` e `funcs %` do arquivo do motor, e
+  `uncovered lines` com as linhas (ou faixas) não executadas. Ramo não coberto aparece só na
+  porcentagem; para saber qual, rode com `--test-reporter=lcov --test-reporter-destination=<arquivo>`
+  e procure as linhas `BRDA:<linha>,…,0`.
+- O teste de desempenho do AF-10 (`… em < 500 ms`) é filtrado no script (`--test-skip-pattern`),
+  porque fica lento sob instrumentação; ele continua no `npm test`. Nenhum teste novo pode ter
+  "500 ms" no nome.
+- **Caso de borda novo**: entra no arquivo da área: `availability-engine.edge-cases.test.js`
+  (virada de dia, fim do expediente, almoço, entradas) ou `availability-engine.dst.test.js`
+  (horário de verão, o único que depende do `tzdata`), com `critério N:` no nome ou um comentário
+  `AF-21`/id da história. Dia de transição sempre começa com `assertTransitionDay` (de
+  `test/helpers/availability.js`), que falha com data, fuso e `process.versions.tz` se o `tzdata`
+  do Node mudar a data. Comportamento atual estranho, mas coerente com o design, entra como
+  `caracterização:`; defeito real entra como `{ todo: '<id do bug>' }`, com a asserção do valor
+  esperado. Sem `Date.now()`, `new Date()` sem argumento nem mudança de `process.env.TZ`.
 
 ### Falha no `audit`
 

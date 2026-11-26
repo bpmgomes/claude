@@ -288,6 +288,22 @@ describe('recheck dentro da transação (critério 10)', () => {
       ['2027-11-07T05:30:00.000Z', '2027-11-07T05:30:00.000Z'],
     );
   });
+
+  // AF-21 (design 8, lacuna do contrato com o AF-11): reserva em dia de salto.
+  test('salto do horário de verão (America/New_York, 14/3/2027): 03:00 é aceito e 02:30 (inexistente) é recusado', async () => {
+    await app.close();
+    await setup('2027-03-10T16:00:00.000Z');
+    await setBusinessTimezone(app, businessId, 'America/New_York');
+    for (const p of [pa, pb]) assert.equal((await putHours(app, ana, p.id, ALL_WEEK)).statusCode, 200);
+    // 02:00–03:00 não existe; 03:00 EDT = 07:00Z.
+    const ok = await book(body({ start: '2027-03-14T03:00' }));
+    assert.equal(ok.status, 201);
+    assert.equal((await app.db.get('SELECT starts_at FROM appointments')).starts_at, '2027-03-14T07:00:00.000Z');
+    const err = await fails(book(body({ professionalId: pb.id, start: '2027-03-14T02:30' })));
+    assert.ok(err instanceof SlotUnavailableError, String(err));
+    assert.equal(err.message, M.slotUnavailable);
+    assert.equal(await countAppointments(app.db), 1);
+  });
 });
 
 describe('"qualquer profissional" (critérios 12 a 14)', () => {

@@ -228,7 +228,7 @@ Tipo: Técnica · Prioridade: Alta · Pontos: 3 · Status: DONE
 Configurar CI que rode lint, testes e build a cada pull request. PR não pode ser mesclado com CI quebrado.
 
 ### AF-21 · Testes automatizados da regra de disponibilidade
-Tipo: Técnica · Prioridade: Alta · Pontos: 3 · Status: TODO
+Tipo: Técnica · Prioridade: Alta · Pontos: 3 · Status: DONE
 
 Cobertura de testes unitários da AF-10 incluindo casos de borda: virada de dia, serviço que termina exatamente no fim do expediente, intervalo de almoço, horário de verão (caso volte a existir).
 
