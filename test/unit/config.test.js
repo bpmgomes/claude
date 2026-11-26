@@ -55,6 +55,8 @@ describe('loadConfig', () => {
     assert.deepEqual(c.rateLimit.professionalWrite, { perUser: 30, perIp: 60 });
     assert.deepEqual(c.rateLimit.professionalPhoto, { perUser: 10, perIp: 20 });
     assert.deepEqual(c.rateLimit.hoursWrite, { perUser: 30, perIp: 60 });
+    assert.deepEqual(c.rateLimit.timeBlockWrite, { perUser: 30, perIp: 60 });
+    assert.deepEqual(c.rateLimit.timeBlockRead, { perUser: 60, perIp: 120 });
     assert.deepEqual(c.imageProcessing, { concurrency: 2, queueMax: 4, queueTimeoutMs: 10000 });
   });
 

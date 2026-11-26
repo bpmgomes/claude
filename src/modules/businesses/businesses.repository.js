@@ -68,6 +68,15 @@ export function createBusinessesRepository(db) {
       return { id, ownerId, name, slug, address, phone, timezone, logoKey: null, createdAt, updatedAt: createdAt };
     },
 
+    /**
+     * Trava da linha do negócio: UPDATE sem efeito que, no PostgreSQL, trava a linha até o fim da
+     * transação (AF-16: serializa criações e remoções de bloqueio e o teto de 500 ativos).
+     * @returns {Promise<{ changes: number }>}
+     */
+    async lockById(id, conn = db) {
+      return conn.run('UPDATE businesses SET updated_at = updated_at WHERE id = ?', [id]);
+    },
+
     /** @returns {Promise<Business|undefined>} */
     async findByOwnerId(ownerId, conn = db) {
       return fromRow(await conn.get(`SELECT ${COLUMNS} FROM businesses WHERE owner_id = ?`, [ownerId]));

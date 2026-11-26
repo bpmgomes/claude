@@ -274,6 +274,8 @@ export function createProfessionalsRepository(db) {
     /**
      * Remoção lógica: grava `removed_at` e limpa a foto. Deve rodar na transação da remoção,
      * ANTES da contagem de agendamentos futuros (o UPDATE disputa a linha com `claimForBooking`).
+     * Na mesma conexão, apaga os bloqueios do profissional (AF-16, decisão 7 e critério 17); os
+     * de "todos" (professional_id NULL) não são tocados. Um ROLLBACK da remoção devolve os bloqueios.
      * @returns {Promise<{ previousPhotoKey: string|null, changes: number }>}
      */
     async markRemoved(id, businessId, nowIso, conn = db) {
@@ -286,6 +288,9 @@ export function createProfessionalsRepository(db) {
           WHERE id = ? AND business_id = ? AND removed_at IS NULL`,
         [nowIso, nowIso, id, businessId],
       );
+      if (changes > 0) {
+        await conn.run('DELETE FROM time_blocks WHERE professional_id = ? AND business_id = ?', [id, businessId]);
+      }
       return { previousPhotoKey: changes > 0 && row ? row.photo_key ?? null : null, changes };
     },
 
@@ -375,6 +380,18 @@ export function createProfessionalsRepository(db) {
      */
     async lockActive(id, businessId, conn = db) {
       return lockActive(id, businessId, conn);
+    },
+
+    /**
+     * Trava de todos os profissionais ativos do negócio (AF-16, bloqueio de "todos"): UPDATE sem
+     * efeito, como `lockActive`. Serializa contra `markRemoved` e `claimForBooking`.
+     * @returns {Promise<{ changes: number }>}
+     */
+    async lockAllActive(businessId, conn = db) {
+      return conn.run(
+        'UPDATE professionals SET updated_at = updated_at WHERE business_id = ? AND removed_at IS NULL',
+        [businessId],
+      );
     },
 
     /**

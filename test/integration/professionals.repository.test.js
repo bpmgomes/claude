@@ -346,3 +346,48 @@ test('findListedByBusinessId faz 2 consultas, nenhuma com IN (', async () => {
   assert.deepEqual(await createProfessionalsRepository(counting).findListedByBusinessId(businessB), []);
   assert.equal(calls.length, 1);
 });
+
+// ---------------------------------------------------------------------------
+// AF-16: markRemoved apaga os bloqueios do profissional; lockAllActive.
+// ---------------------------------------------------------------------------
+
+async function insertBlock(businessId, professionalId) {
+  const id = randomUUID();
+  await db.run(
+    `INSERT INTO time_blocks (id, business_id, professional_id, starts_at, ends_at, reason_kind, reason_note, created_at)
+     VALUES (?, ?, ?, '2026-12-24T17:00:00.000Z', '2026-12-24T21:00:00.000Z', NULL, NULL, ?)`,
+    [id, businessId, professionalId, NOW],
+  );
+  return id;
+}
+
+const blockIds = async () => (await db.all('SELECT id FROM time_blocks ORDER BY id')).map((r) => r.id).sort();
+
+test('markRemoved apaga os time_blocks do profissional e mantém os de "todos" e os de outros (AF-16, critério 17)', async () => {
+  const ana = await makeProfessional(businessA, 'Ana');
+  const bia = await makeProfessional(businessA, 'Bia');
+  await insertBlock(businessA, ana);
+  await insertBlock(businessA, ana);
+  const keep = [await insertBlock(businessA, bia), await insertBlock(businessA, null), await insertBlock(businessB, null)];
+  const result = await repo.markRemoved(ana, businessA, NOW);
+  assert.equal(result.changes, 1);
+  assert.deepEqual(await blockIds(), keep.sort());
+});
+
+test('markRemoved sem efeito (já removido ou de outro negócio) não apaga bloqueios', async () => {
+  const ana = await makeProfessional(businessA, 'Ana');
+  const block = await insertBlock(businessA, ana);
+  assert.equal((await repo.markRemoved(ana, businessB, NOW)).changes, 0);
+  assert.deepEqual(await blockIds(), [block]);
+});
+
+test('lockAllActive só afeta os ativos do negócio e não altera dados', async () => {
+  await makeProfessional(businessA, 'Ana');
+  await makeProfessional(businessA, 'Bia');
+  const removed = await makeProfessional(businessA, 'Cris');
+  await repo.markRemoved(removed, businessA, NOW);
+  await makeProfessional(businessB, 'Duda');
+  const before = await db.all('SELECT id, updated_at FROM professionals ORDER BY id');
+  assert.deepEqual(await repo.lockAllActive(businessA), { changes: 2 });
+  assert.deepEqual(await db.all('SELECT id, updated_at FROM professionals ORDER BY id'), before);
+});

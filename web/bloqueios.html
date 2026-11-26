@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bloqueios · AgendaFácil</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <script type="module" src="/js/bloqueios-page.js"></script>
+</head>
+<body>
+  <main class="card">
+    <img id="logo-preview" class="logo-thumb" alt="Logo do negócio" width="96" height="96" hidden>
+    <h1 id="business-name">Carregando…</h1>
+    <p class="subtitle">Bloqueios</p>
+
+    <p class="help" id="page-status" role="status" aria-live="polite"></p>
+
+    <section id="time-blocks-section" hidden>
+      <form id="time-block-form" class="time-block-form" novalidate>
+        <h2 class="section-title">Novo bloqueio</h2>
+
+        <div class="field">
+          <label for="professionalId">Profissional</label>
+          <select id="professionalId" name="professionalId" class="professional-select"
+                  aria-describedby="professionalId-error"></select>
+          <p class="field-error" id="professionalId-error" aria-live="polite"></p>
+        </div>
+
+        <div class="field field-checkbox">
+          <input id="all-day" name="allDay" type="checkbox">
+          <label for="all-day">Dia inteiro</label>
+        </div>
+
+        <div class="time-block-row">
+          <div class="field">
+            <label for="start-date" id="start-date-label">Início</label>
+            <input id="start-date" name="startDate" type="date" required aria-describedby="start-error">
+          </div>
+          <div class="field" id="start-time-field">
+            <label for="start-time">Hora de início</label>
+            <select id="start-time" name="startTime"></select>
+          </div>
+        </div>
+        <p class="field-error" id="start-error" aria-live="polite"></p>
+
+        <div class="time-block-row">
+          <div class="field">
+            <label for="end-date" id="end-date-label">Fim</label>
+            <input id="end-date" name="endDate" type="date" required aria-describedby="end-error">
+          </div>
+          <div class="field" id="end-time-field">
+            <label for="end-time">Hora de fim</label>
+            <select id="end-time" name="endTime"></select>
+          </div>
+        </div>
+        <p class="field-error" id="end-error" aria-live="polite"></p>
+
+        <div class="field">
+          <label for="reasonKind">Motivo (opcional)</label>
+          <select id="reasonKind" name="reasonKind" aria-describedby="reasonKind-error">
+            <option value="">Sem motivo</option>
+            <option value="day_off">Folga</option>
+            <option value="holiday">Feriado</option>
+            <option value="vacation">Férias</option>
+            <option value="other">Outro</option>
+          </select>
+          <p class="field-error" id="reasonKind-error" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label for="reasonNote">Descrição do motivo (opcional)</label>
+          <input id="reasonNote" name="reasonNote" type="text" autocomplete="off" maxlength="60"
+                 aria-describedby="reasonNote-error">
+          <p class="field-error" id="reasonNote-error" aria-live="polite"></p>
+        </div>
+
+        <p class="form-error" id="form-error" role="alert" aria-live="polite"></p>
+        <p class="field-warning" id="save-warning" aria-live="polite"></p>
+        <p class="help" id="save-status" aria-live="polite"></p>
+
+        <button type="submit" id="save-button">Bloquear período</button>
+      </form>
+
+      <section id="conflicts-panel" class="conflicts-panel" hidden aria-labelledby="conflicts-title">
+        <h2 id="conflicts-title" class="section-title">Há agendamentos neste período</h2>
+        <p class="field-warning" id="conflicts-changed" aria-live="polite"></p>
+        <p id="conflicts-summary"></p>
+        <ul id="conflicts-list" class="service-list"></ul>
+        <p class="help">Bloquear não cancela nem move esses agendamentos. Resolva cada um depois.</p>
+        <div class="service-actions">
+          <button type="button" id="confirm-button">Bloquear mesmo assim</button>
+          <button type="button" id="cancel-button" class="button-secondary">Cancelar</button>
+        </div>
+      </section>
+
+      <h2 class="section-title list-filter">Bloqueios</h2>
+      <div class="time-block-row">
+        <div class="field">
+          <label for="filter-professional">Mostrar</label>
+          <select id="filter-professional" class="professional-select"></select>
+        </div>
+      </div>
+      <div class="time-block-row">
+        <div class="field">
+          <label for="filter-from">De (opcional)</label>
+          <input id="filter-from" type="date">
+        </div>
+        <div class="field">
+          <label for="filter-to">Até (opcional)</label>
+          <input id="filter-to" type="date">
+        </div>
+      </div>
+      <p class="field-error" id="filter-error" aria-live="polite"></p>
+
+      <p class="help" id="empty-state" hidden></p>
+      <p class="help" id="truncated" hidden>Mostrando os primeiros 500 bloqueios. Use um período menor.</p>
+      <ul id="time-block-list" class="service-list"></ul>
+    </section>
+
+    <p class="secondary-link"><a href="/horarios">Horários</a> · <a href="/profissionais">Profissionais</a></p>
+    <button type="button" id="logout-button" class="button-secondary button-spaced">Sair</button>
+  </main>
+</body>
+</html>

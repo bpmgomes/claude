@@ -102,3 +102,35 @@ export function putHours(app, cookies, professionalId, days, { headers = {} } = 
     payload: { days },
   });
 }
+
+/**
+ * `POST /api/time-blocks`. Devolve a resposta crua (sem checar status).
+ * @returns {Promise<import('light-my-request').Response>}
+ */
+export function postTimeBlock(app, cookies, body, { headers = {}, remoteAddress } = {}) {
+  const options = { method: 'POST', url: '/api/time-blocks', cookies, headers, payload: body };
+  if (remoteAddress) options.remoteAddress = remoteAddress;
+  return app.inject(options);
+}
+
+/**
+ * `GET /api/time-blocks` com a query dada. Devolve a resposta crua.
+ * @param {Record<string, string>} [query]
+ * @returns {Promise<import('light-my-request').Response>}
+ */
+export function listTimeBlocks(app, cookies, query = {}) {
+  return app.inject({ method: 'GET', url: '/api/time-blocks', cookies, query });
+}
+
+/**
+ * `DELETE /api/time-blocks/:id`. Devolve a resposta crua.
+ * @returns {Promise<import('light-my-request').Response>}
+ */
+export function deleteTimeBlock(app, cookies, id, { headers = {} } = {}) {
+  return app.inject({ method: 'DELETE', url: `/api/time-blocks/${id}`, cookies, headers });
+}
+
+/** Troca o fuso do negócio direto no banco (o fuso não é editável pela API). */
+export async function setBusinessTimezone(app, businessId, timeZone) {
+  await app.db.run('UPDATE businesses SET timezone = ? WHERE id = ?', [timeZone, businessId]);
+}

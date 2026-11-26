@@ -23,6 +23,10 @@
  *   `rateLimit.professionalPhoto` (10/20 por minuto: trocar e remover a foto), também POR ROTA.
  * - `rateLimit.hoursWrite` (30/60 por minuto: gravar a grade de horários do profissional, POR ROTA).
  *   A leitura da grade não tem limite por usuário.
+ * - `rateLimit.timeBlockWrite` (30/60 por minuto: criar e remover bloqueio de horário, POR ROTA:
+ *   POST e DELETE com contadores próprios).
+ * - `rateLimit.timeBlockRead` (60/120 por minuto: listar bloqueios, `GET /api/time-blocks`). É a
+ *   única leitura do dono com limite por usuário (AF-16, critério 22).
  * - `rateLimit.publicPage` (`{ perIp: 120 }` por minuto: `/:slug`, `/:slug/` e o 404 de fallback) e
  *   `rateLimit.publicMedia` (`{ perIp: 600 }` por minuto: `/media/logos/:file` e
  *   `/media/professionals/:file`): rotas anônimas, só por IP (IPv6 agrupado no /64), POR ROTA.
@@ -68,6 +72,8 @@ export function loadConfig(env = process.env) {
       professionalWrite: { perUser: 30, perIp: 60 },
       professionalPhoto: { perUser: 10, perIp: 20 },
       hoursWrite: { perUser: 30, perIp: 60 },
+      timeBlockWrite: { perUser: 30, perIp: 60 },
+      timeBlockRead: { perUser: 60, perIp: 120 },
       publicPage: { perIp: 120 },
       publicMedia: { perIp: 600 },
     },

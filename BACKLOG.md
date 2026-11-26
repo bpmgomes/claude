@@ -185,7 +185,7 @@ Critérios de aceite
 - O dono pode forçar um encaixe fora do horário, com aviso explícito.
 
 ### AF-16 · Bloquear horários
-Tipo: História · Prioridade: Média · Pontos: 2 · Status: TODO
+Tipo: História · Prioridade: Média · Pontos: 2 · Status: DONE
 
 Como dono, quero bloquear períodos (folga, feriado, férias) de um ou todos os profissionais.
 

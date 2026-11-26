@@ -63,6 +63,8 @@ function businessLimits({
   professionalWrite,
   professionalPhoto,
   hoursWrite,
+  timeBlockWrite,
+  timeBlockRead,
   publicPage,
   publicMedia,
 } = {}) {
@@ -75,6 +77,8 @@ function businessLimits({
     professionalWrite: professionalWrite || { perUser: 100, perIp: 100 },
     professionalPhoto: professionalPhoto || { perUser: 100, perIp: 100 },
     hoursWrite: hoursWrite || { perUser: 100, perIp: 100 },
+    timeBlockWrite: timeBlockWrite || { perUser: 100, perIp: 100 },
+    timeBlockRead: timeBlockRead || { perUser: 100, perIp: 100 },
     publicPage: publicPage || { perIp: 100 },
     publicMedia: publicMedia || { perIp: 100 },
   };
@@ -660,6 +664,108 @@ test('com cookie, a página não consome limite de usuário nem resolve a sessã
     }
     assert.equal((await checkSlug(app, seed.cookies)).statusCode, 200);
     assert.equal((await checkSlug(app, seed.cookies)).statusCode, 429);
+  } finally {
+    await app.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AF-16 (critério 22): buckets próprios `timeBlockWrite` (POST e DELETE, contadores separados)
+// e `timeBlockRead` (listagem com limite por usuário).
+// ---------------------------------------------------------------------------
+
+const { postTimeBlock, listTimeBlocks, deleteTimeBlock } = await import('../helpers/session.js');
+const { createClock } = await import('../helpers/clock.js');
+
+const TIME_BLOCK = Object.freeze({ professionalId: null, start: '2026-12-24T14:00', end: '2026-12-24T18:00' });
+
+async function timeBlockApp(limits) {
+  const clock = createClock('2026-12-01T12:00:00.000Z');
+  const { app } = await buildTestApp({ now: clock.now, rateLimit: businessLimits(limits) });
+  const ana = await signupAndLogin(app);
+  await createBusinessFor(app, ana);
+  return { app, ana };
+}
+
+test('timeBlockWrite.perUser 2: o 3º POST /api/time-blocks dá 429', async () => {
+  const { app, ana } = await timeBlockApp({ timeBlockWrite: { perUser: 2, perIp: 100 } });
+  try {
+    const statuses = [];
+    for (let i = 0; i < 3; i++) statuses.push((await postTimeBlock(app, ana, TIME_BLOCK)).statusCode);
+    assert.deepEqual(statuses, [201, 201, 429]);
+    const last = await postTimeBlock(app, ana, TIME_BLOCK);
+    assert.equal(last.json().error.code, 'RATE_LIMITED');
+    assert.equal(Number((await app.db.get('SELECT COUNT(*) AS n FROM time_blocks')).n), 2);
+  } finally {
+    await app.close();
+  }
+});
+
+test('5 GET /api/time-blocks não consomem o limite do POST (critério 22)', async () => {
+  const { app, ana } = await timeBlockApp({ timeBlockWrite: { perUser: 1, perIp: 1 } });
+  try {
+    for (let i = 0; i < 5; i++) assert.equal((await listTimeBlocks(app, ana)).statusCode, 200);
+    assert.equal((await postTimeBlock(app, ana, TIME_BLOCK)).statusCode, 201);
+    assert.equal((await postTimeBlock(app, ana, TIME_BLOCK)).statusCode, 429);
+  } finally {
+    await app.close();
+  }
+});
+
+test('timeBlockRead.perUser 2: o 3º GET dá 429 e o POST seguinte passa', async () => {
+  const { app, ana } = await timeBlockApp({ timeBlockRead: { perUser: 2, perIp: 100 } });
+  try {
+    const statuses = [];
+    for (let i = 0; i < 3; i++) statuses.push((await listTimeBlocks(app, ana)).statusCode);
+    assert.deepEqual(statuses, [200, 200, 429]);
+    assert.equal((await listTimeBlocks(app, ana)).json().error.code, 'RATE_LIMITED');
+    assert.equal((await postTimeBlock(app, ana, TIME_BLOCK)).statusCode, 201);
+  } finally {
+    await app.close();
+  }
+});
+
+test('POST no limite não impede o DELETE (contadores próprios por rota)', async () => {
+  const { app, ana } = await timeBlockApp({ timeBlockWrite: { perUser: 1, perIp: 100 } });
+  try {
+    const created = await postTimeBlock(app, ana, TIME_BLOCK);
+    assert.equal(created.statusCode, 201);
+    assert.equal((await postTimeBlock(app, ana, TIME_BLOCK)).statusCode, 429);
+    assert.equal((await deleteTimeBlock(app, ana, created.json().timeBlock.id)).statusCode, 204);
+    assert.equal((await deleteTimeBlock(app, ana, created.json().timeBlock.id)).statusCode, 429);
+  } finally {
+    await app.close();
+  }
+});
+
+test('timeBlockWrite.perIp 2: o 3º POST do mesmo IP por usuários diferentes dá 429', async () => {
+  const clock = createClock('2026-12-01T12:00:00.000Z');
+  const { app } = await buildTestApp({ now: clock.now, rateLimit: businessLimits({ timeBlockWrite: { perUser: 100, perIp: 2 } }) });
+  try {
+    const statuses = [];
+    for (const [i, email] of ['a@x.com', 'b@x.com', 'c@x.com'].entries()) {
+      const cookies = await signupAndLogin(app, { email });
+      await createBusinessFor(app, cookies, { name: `Salão ${i + 1}` });
+      statuses.push((await postTimeBlock(app, cookies, TIME_BLOCK, { remoteAddress: '10.0.0.1' })).statusCode);
+    }
+    assert.deepEqual(statuses, [201, 201, 429]);
+  } finally {
+    await app.close();
+  }
+});
+
+test('sem sessão, GET e POST de bloqueios dão 401 e não consomem o limite do usuário', async () => {
+  const { app, ana } = await timeBlockApp({
+    timeBlockWrite: { perUser: 1, perIp: 100 },
+    timeBlockRead: { perUser: 1, perIp: 100 },
+  });
+  try {
+    for (let i = 0; i < 3; i++) {
+      assert.equal((await postTimeBlock(app, {}, TIME_BLOCK)).statusCode, 401);
+      assert.equal((await listTimeBlocks(app, {})).statusCode, 401);
+    }
+    assert.equal((await postTimeBlock(app, ana, TIME_BLOCK)).statusCode, 201);
+    assert.equal((await listTimeBlocks(app, ana)).statusCode, 200);
   } finally {
     await app.close();
   }

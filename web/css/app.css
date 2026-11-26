@@ -488,3 +488,47 @@ input:disabled {
   gap: 8px 16px;
   margin-top: 8px;
 }
+
+/* AF-16: bloqueios */
+.time-block-form {
+  margin-bottom: 24px;
+}
+
+.time-block-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+}
+
+.time-block-row .field {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.time-block-item .service-info {
+  flex: 1 1 160px;
+}
+
+.time-block-target,
+.conflict-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.time-block-reason {
+  overflow-wrap: anywhere;
+}
+
+.conflicts-panel {
+  margin: 0 0 24px;
+  padding: 12px;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  background: #fffbeb;
+}
+
+.conflicts-panel .section-title {
+  margin-top: 0;
+}

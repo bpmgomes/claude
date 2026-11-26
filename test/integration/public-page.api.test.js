@@ -242,6 +242,26 @@ describe('visibilidade e mudanças do dono (critérios 3 a 5, 7, 23, 24)', () =>
     return p;
   }
 
+  test('AF-16 (critério 23): bloqueios não mudam a página nem expõem o motivo', async () => {
+    const corte = await createService(app, ana, { name: 'Corte' });
+    const p = await bookable('Bia Lima', [corte.id]);
+    const before = await page();
+    for (const professionalId of [null, p.id]) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/time-blocks',
+        cookies: ana,
+        payload: { professionalId, start: '2026-03-01T00:00', end: '2026-03-31T00:00', reasonKind: 'vacation', reasonNote: 'Férias da Ana' },
+      });
+      assert.equal(res.statusCode, 201, res.body);
+    }
+    const after = await page();
+    assert.equal(after.statusCode, 200);
+    assert.deepEqual(names(after, 'pp-professional-name'), names(before, 'pp-professional-name'));
+    assert.ok(!after.body.includes('Férias da Ana'));
+    assert.ok(!/bloque/i.test(after.body));
+  });
+
   test('negócio sem serviços: 200 com estado vazio explicativo (critério 7)', async () => {
     const res = await page();
     assert.equal(res.statusCode, 200);

@@ -33,6 +33,9 @@ import professionalsRoutes from './modules/professionals/professionals.routes.js
 import { createWorkingHoursRepository } from './modules/working-hours/working-hours.repository.js';
 import { createWorkingHoursService } from './modules/working-hours/working-hours.service.js';
 import workingHoursRoutes from './modules/working-hours/working-hours.routes.js';
+import { createTimeBlocksRepository } from './modules/time-blocks/time-blocks.repository.js';
+import { createTimeBlocksService } from './modules/time-blocks/time-blocks.service.js';
+import timeBlocksRoutes from './modules/time-blocks/time-blocks.routes.js';
 import { createPublicPageService } from './modules/public-page/public-page.service.js';
 import publicPageRoutes, {
   sendNotFoundPage,
@@ -63,6 +66,7 @@ export const PAGES = Object.freeze({
   '/servicos': 'servicos.html',
   '/profissionais': 'profissionais.html',
   '/horarios': 'horarios.html',
+  '/bloqueios': 'bloqueios.html',
 });
 
 /**
@@ -152,6 +156,18 @@ export async function buildApp(overrides = {}) {
     now,
     log: app.log,
   });
+  const timeBlocksRepository = createTimeBlocksRepository(db);
+  // Sem `appointments`: usa a porta nula (noAppointments) até o AF-11.
+  const timeBlocksService = createTimeBlocksService({
+    db,
+    timeBlocksRepository,
+    professionalsRepository,
+    businessesRepository,
+    now,
+    log: app.log,
+  });
+  // Retenção (AF-16, 5.5): encerrados há mais de 90 dias saem no boot.
+  await timeBlocksService.purgeExpired();
   const publicPageService = createPublicPageService({
     businessesRepository,
     servicesRepository,
@@ -185,6 +201,8 @@ export async function buildApp(overrides = {}) {
     professionalsService,
     workingHoursRepository,
     workingHoursService,
+    timeBlocksRepository,
+    timeBlocksService,
     publicPageService,
     imageLimiter,
   });
@@ -259,6 +277,7 @@ export async function buildApp(overrides = {}) {
   await app.register(servicesRoutes);
   await app.register(professionalsRoutes);
   await app.register(workingHoursRoutes);
+  await app.register(timeBlocksRoutes);
   // Por último: `/:slug` só casa o que nenhuma rota estática casou.
   await app.register(publicPageRoutes);
 

@@ -363,3 +363,44 @@ test('dono sem negócio: BUSINESS_REQUIRED em todas as operações', async () =>
     await assert.rejects(call(), (err) => err.statusCode === 409 && err.code === 'BUSINESS_REQUIRED');
   }
 });
+
+// ---------------------------------------------------------------------------
+// AF-16 (critério 17): a remoção apaga os bloqueios do profissional na mesma transação.
+// ---------------------------------------------------------------------------
+
+async function insertBlock(professionalId) {
+  await db.run(
+    `INSERT INTO time_blocks (id, business_id, professional_id, starts_at, ends_at, reason_kind, reason_note, created_at)
+     VALUES (?, ?, ?, '2026-12-24T17:00:00.000Z', '2026-12-24T21:00:00.000Z', NULL, NULL, ?)`,
+    [randomUUID(), businessId, professionalId, clock.now().toISOString()],
+  );
+}
+
+const blocksOf = async (professionalId) =>
+  Number(
+    (
+      await db.get('SELECT COUNT(*) AS n FROM time_blocks WHERE professional_id IS ? AND business_id = ?', [
+        professionalId,
+        businessId,
+      ])
+    ).n,
+  );
+
+test('remove apaga os bloqueios do profissional e mantém os de "todos"', async () => {
+  const service = build();
+  const { professional } = await service.create(ownerId, { name: 'Ana' });
+  await insertBlock(professional.id);
+  await insertBlock(null);
+  await service.remove(ownerId, professional.id);
+  assert.equal(await blocksOf(professional.id), 0);
+  assert.equal(await blocksOf(null), 1);
+});
+
+test('remove bloqueado por agendamentos futuros: o rollback devolve os bloqueios', async () => {
+  const service = build({ appointments: fakeAppointments({ byProfessional: 1 }) });
+  const { professional } = await service.create(ownerId, { name: 'Ana' });
+  await insertBlock(professional.id);
+  await assert.rejects(service.remove(ownerId, professional.id), { code: 'PROFESSIONAL_HAS_FUTURE_APPOINTMENTS' });
+  assert.equal(await blocksOf(professional.id), 1);
+  assert.equal((await rowOf(professional.id)).removed_at, null);
+});

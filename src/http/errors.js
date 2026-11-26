@@ -79,6 +79,34 @@ export class ProfessionalHasAppointmentsError extends ConflictError {
   }
 }
 
+/**
+ * Agendamentos em conflito com o bloqueio (design AF-16, 4.1): nada foi gravado e a tela pede
+ * confirmação. `code`: 'TIME_BLOCK_CONFLICTS' (sem token) ou 'TIME_BLOCK_CONFLICTS_CHANGED'
+ * (token enviado, mas a lista mudou ou o token é inválido).
+ */
+export class TimeBlockConflictsError extends ConflictError {
+  /**
+   * @param {string} code
+   * @param {string} message
+   * @param {{ conflicts: object[], conflictsTotal: number, conflictsToken: string }} details
+   */
+  constructor(code, message, { conflicts, conflictsTotal, conflictsToken }) {
+    super(code, message);
+    this.name = 'TimeBlockConflictsError';
+    this.conflicts = conflicts;
+    this.conflictsTotal = conflictsTotal;
+    this.conflictsToken = conflictsToken;
+  }
+}
+
+/** Dependência indisponível (ex.: porta de agendamentos, CONFLICTS_UNAVAILABLE). Nada foi gravado. */
+export class ServiceUnavailableError extends AppError {
+  constructor(code, message) {
+    super(503, code, message);
+    this.name = 'ServiceUnavailableError';
+  }
+}
+
 export class RateLimitedError extends AppError {
   /** @param {number} retryAfterSeconds só vai no header Retry-After (o corpo segue o formato do RATE_LIMITED) */
   constructor(retryAfterSeconds) {
@@ -122,7 +150,7 @@ export class LoginLockedError extends AppError {
 
 const GENERIC_500 = 'Erro inesperado. Tente novamente.';
 
-function body(code, message, fields, retryAfterSeconds, suggestion, futureAppointmentsCount) {
+function body(code, message, fields, retryAfterSeconds, suggestion, futureAppointmentsCount, conflictInfo = {}) {
   const error = { code, message };
   if (fields && Object.keys(fields).length > 0) error.fields = fields;
   if (retryAfterSeconds !== undefined) error.retryAfterSeconds = retryAfterSeconds;
@@ -130,6 +158,10 @@ function body(code, message, fields, retryAfterSeconds, suggestion, futureAppoin
   if (Number.isInteger(futureAppointmentsCount) && futureAppointmentsCount >= 0) {
     error.futureAppointmentsCount = futureAppointmentsCount;
   }
+  const { conflicts, conflictsTotal, conflictsToken } = conflictInfo;
+  if (Number.isInteger(conflictsTotal) && conflictsTotal >= 0) error.conflictsTotal = conflictsTotal;
+  if (Array.isArray(conflicts)) error.conflicts = conflicts;
+  if (typeof conflictsToken === 'string') error.conflictsToken = conflictsToken;
   return { error };
 }
 
@@ -153,6 +185,11 @@ export function errorHandler(error, request, reply) {
           error.retryAfterSeconds,
           error.suggestion,
           error.futureAppointmentsCount,
+          {
+            conflicts: error.conflicts,
+            conflictsTotal: error.conflictsTotal,
+            conflictsToken: error.conflictsToken,
+          },
         ),
       );
   }

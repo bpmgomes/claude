@@ -17,7 +17,7 @@ export const SLUG_MESSAGES = Object.freeze({
  */
 export const RESERVED_SLUGS = readOnlySet([
   'admin', 'api', 'app', 'login', 'logout', 'cadastro', 'onboarding', 'negocio', 'servicos',
-  'profissionais', 'horarios', 'agenda', 'agendar', 'agendamentos', 'painel', 'conta',
+  'profissionais', 'horarios', 'bloqueios', 'agenda', 'agendar', 'agendamentos', 'painel', 'conta',
   'configuracoes', 'static', 'shared', 'media', 'uploads', 'assets', 'css', 'js', 'img',
   'public', 'www', 'ajuda', 'suporte', 'termos', 'privacidade', 'sobre', 'contato', 'blog',
   'status', 'health', 'robots', 'sitemap',
