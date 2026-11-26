@@ -261,7 +261,8 @@ function toSuggestions(list, requestedStart) {
 
 /**
  * POST de confirmação, sempre com credentials: 'omit' (critério 30) e, com `idempotencyKey`, o
- * cabeçalho Idempotency-Key (critério 25). Resultado: `{ ok: true, appointment }` ou `{ ok: false,
+ * cabeçalho Idempotency-Key (critério 25). Resultado: `{ ok: true, appointment, manage }` (`manage`:
+ * `{ url, policy }` só com link válido, senão null; AF-12, critério 8) ou `{ ok: false,
  * kind, message }` com kind 'fields' (+ fields, otherFields), 'slot' (+ suggestions), 'limit',
  * 'notFound', 'rateLimited', 'reused', 'unavailable' ou 'network'.
  */
@@ -281,7 +282,9 @@ export async function confirmBooking(slug, { serviceId, professionalId, start, c
   const res = await requestJson(appointmentsUrl(slug), options);
   if (res.ok) {
     const appointment = res.body && res.body.appointment;
-    if (res.status === 201 && appointment && typeof appointment === 'object') return { ok: true, appointment };
+    if (res.status === 201 && appointment && typeof appointment === 'object') {
+      return { ok: true, appointment, manage: manageLinkOf(res.body.manage) };
+    }
     return { ok: false, kind: 'unavailable', message: BOOKING_MESSAGES.bookingUnavailable };
   }
   const error = res.error || {};
@@ -369,6 +372,22 @@ export function successDetails(appointment) {
     { label: 'Profissional', value: text(professional.name) },
     { label: 'Endereço', value: text(business.address) },
   ];
+}
+
+/** Link de gerenciar (AF-12): só `http(s)://<host>/agendamento/<43 base64url>`, sem query nem fragmento. */
+const MANAGE_URL_RE = /^https?:\/\/[^/?#\s@]+\/agendamento\/[A-Za-z0-9_-]{43}$/;
+
+/** A URL de gerenciar, ou null fora do formato (nunca vira link outro endereço). */
+export function safeManageUrl(url) {
+  return typeof url === 'string' && MANAGE_URL_RE.test(url) ? url : null;
+}
+
+/** `manage` do 201: `{ url, policy }` com URL válida, ou null (então só o telefone aparece). */
+function manageLinkOf(manage) {
+  if (!manage || typeof manage !== 'object') return null;
+  const url = safeManageUrl(manage.url);
+  if (!url) return null;
+  return { url, policy: text(manage.policy) };
 }
 
 /** Só tel:+55 com 10 ou 11 dígitos; senão null. */

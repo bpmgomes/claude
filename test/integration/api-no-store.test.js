@@ -70,6 +70,34 @@ describe('no-store em /api/*', () => {
     for (const res of [created, taken, reused]) assert.equal(res.headers['cache-control'], 'no-store');
   });
 
+  test('as 4 rotas do gerenciar com no-store em 200, 404 e 409 (AF-12, critério 34)', async () => {
+    const { bookWithLink, getManage, manageAvailability, cancelManage, rescheduleManage } = await import('../helpers/manage.js');
+    const { token } = await bookWithLink(
+      app,
+      seed.slug,
+      bookingBody({ serviceId: seed.services[0].id, professionalId: seed.professionals[0].id, start: '2026-11-27T15:00', customer: { phone: '(11) 97654-3211' } }),
+    );
+    const missing = 'Q'.repeat(43);
+    const stale = 'w'.repeat(43);
+    const responses = [
+      [200, await getManage(app, token)],
+      [404, await getManage(app, missing)],
+      [200, await manageAvailability(app, token, { date: '2026-11-27' })],
+      [404, await manageAvailability(app, missing, { date: '2026-11-27' })],
+      [409, await rescheduleManage(app, token, { start: '2026-11-27T16:00', version: stale })],
+      [404, await rescheduleManage(app, missing, { start: '2026-11-27T16:00', version: stale })],
+      [409, await cancelManage(app, token, { version: stale })],
+      [404, await cancelManage(app, missing, { version: stale })],
+    ];
+    const version = (await getManage(app, token)).json().change.version;
+    responses.push([200, await rescheduleManage(app, token, { start: '2026-11-27T16:00', version })]);
+    responses.push([200, await cancelManage(app, token, { version: (await getManage(app, token)).json().change.version })]);
+    for (const [status, res] of responses) {
+      assert.equal(res.statusCode, status, res.body);
+      assert.equal(res.headers['cache-control'], 'no-store');
+    }
+  });
+
   // QA AF-04: o roteador decodifica o percent-encoding (`/%61pi/business` casa `GET /api/business`);
   // a política segue a rota casada ou o caminho decodificado, nunca o texto bruto.
   const encoded = [

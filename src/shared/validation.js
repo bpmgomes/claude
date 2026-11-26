@@ -9,6 +9,11 @@ export const PASSWORD_MAX_BYTES = 72; // limite do bcrypt
 export const BUSINESS_NAME_MAX = 100;
 export const ADDRESS_MAX = 200;
 export const LOGO_MAX_BYTES = 2 * 1024 * 1024; // 2.097.152, inclusive (usado também no browser)
+/** Antecedência para o cliente cancelar ou remarcar online (AF-12, critério 1, decisão 7). */
+export const CANCELLATION_LEAD_MIN_MINUTES = 0;
+export const CANCELLATION_LEAD_MAX_MINUTES = 4320; // 72 h
+export const CANCELLATION_LEAD_STEP_MINUTES = 15;
+export const CANCELLATION_LEAD_DEFAULT_MINUTES = 120; // = DEFAULT da migração 012 (teste)
 
 export const MESSAGES = Object.freeze({
   nameRequired: 'Informe seu nome.',
@@ -28,6 +33,9 @@ export const MESSAGES = Object.freeze({
   phoneRequired: 'Informe o telefone.',
   phoneInvalid: 'Informe um telefone com DDD, ex.: (11) 91234-5678.',
   nothingToUpdate: 'Nada para atualizar.',
+  leadNotInteger: 'Informe o prazo em minutos, com um número inteiro.',
+  leadOutOfRange: 'Escolha um prazo entre 0 e 4320 minutos (72 h).',
+  leadNotMultiple: 'Use múltiplos de 15 minutos (ex.: 15, 30, 60, 120).',
 });
 
 // \p{Cc}: controle (inclui \n, \t, U+007F..U+009F). \p{Cf}: formatação invisível e bidi
@@ -180,7 +188,20 @@ export function formatPhone(digits) {
   return digits;
 }
 
-const BUSINESS_FIELDS = ['name', 'address', 'phone', 'slug'];
+const BUSINESS_FIELDS = ['name', 'address', 'phone', 'slug', 'cancellationLeadMinutes'];
+
+/**
+ * Antecedência do negócio (AF-12, critério 2): só número JSON inteiro, de 0 a 4320, múltiplo de 15.
+ * Ordem: inteiro, intervalo, múltiplo. Nenhuma mensagem ecoa a entrada.
+ * @param {unknown} raw
+ * @returns {string|null} mensagem fixa ou null
+ */
+export function validateCancellationLead(raw) {
+  if (typeof raw !== 'number' || !Number.isInteger(raw)) return MESSAGES.leadNotInteger;
+  if (raw < CANCELLATION_LEAD_MIN_MINUTES || raw > CANCELLATION_LEAD_MAX_MINUTES) return MESSAGES.leadOutOfRange;
+  if (raw % CANCELLATION_LEAD_STEP_MINUTES !== 0) return MESSAGES.leadNotMultiple;
+  return null;
+}
 
 /**
  * Valida os dados do negócio, juntando os erros de todos os campos.
@@ -189,7 +210,10 @@ const BUSINESS_FIELDS = ['name', 'address', 'phone', 'slug'];
  * - partial=true (PATCH): só os campos presentes (a chave existe no objeto); null ou ''
  *   em campo presente é erro.
  * @param {unknown} input
- * @returns {{ ok: true, value: { name?: string, address?: string, phone?: string, slug?: string } }
+ * - `cancellationLeadMinutes` (AF-12): validado só quando é chave própria e diferente de
+ *   `undefined`, em criação e em edição.
+ * @returns {{ ok: true, value: { name?: string, address?: string, phone?: string, slug?: string,
+ *   cancellationLeadMinutes?: number } }
  *         | { ok: false, fields: Record<string, string> }}
  */
 export function validateBusinessInput(input, { partial = false } = {}) {
@@ -220,6 +244,11 @@ export function validateBusinessInput(input, { partial = false } = {}) {
     const check = validateSlug(src.slug);
     if (!check.ok) fields.slug = check.message;
     else value.slug = check.value;
+  }
+  if (Object.prototype.hasOwnProperty.call(src, 'cancellationLeadMinutes') && src.cancellationLeadMinutes !== undefined) {
+    const error = validateCancellationLead(src.cancellationLeadMinutes);
+    if (error) fields.cancellationLeadMinutes = error;
+    else value.cancellationLeadMinutes = src.cancellationLeadMinutes;
   }
 
   if (Object.keys(fields).length > 0) return { ok: false, fields };

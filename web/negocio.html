@@ -49,6 +49,16 @@
           <button type="button" id="slug-suggestion" class="button-secondary button-small" hidden></button>
         </div>
 
+        <div class="field">
+          <label for="cancellationLeadMinutes">Prazo para o cliente cancelar ou remarcar online (minutos antes do horário)</label>
+          <input id="cancellationLeadMinutes" name="cancellationLeadMinutes" type="number" inputmode="numeric"
+                 min="0" max="4320" step="15" required
+                 aria-describedby="cancellationLeadMinutes-help cancellationLeadMinutes-equivalent cancellationLeadMinutes-error">
+          <p class="help" id="cancellationLeadMinutes-help">De 0 a 4320 (72 h), em múltiplos de 15. 0 permite até o início. A mudança vale também para os agendamentos já marcados.</p>
+          <p class="help" id="cancellationLeadMinutes-equivalent" aria-live="polite"></p>
+          <p class="field-error" id="cancellationLeadMinutes-error" aria-live="polite"></p>
+        </div>
+
         <p class="form-error" id="form-error" role="alert" aria-live="polite"></p>
         <p class="help" id="save-status" aria-live="polite"></p>
 

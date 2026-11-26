@@ -21,6 +21,9 @@ export const RESERVED_SLUGS = readOnlySet([
   'configuracoes', 'static', 'shared', 'media', 'uploads', 'assets', 'css', 'js', 'img',
   'public', 'www', 'ajuda', 'suporte', 'termos', 'privacidade', 'sobre', 'contato', 'blog',
   'status', 'health', 'robots', 'sitemap',
+  // AF-12: página de gerenciar (`/agendamento/:token`) e o prefixo `/api/public/manage/...`, que
+  // capturaria `GET /api/public/manage/availability` de um negócio de slug `manage`.
+  'agendamento', 'manage',
 ]);
 
 // Object.freeze sozinho não impede add/delete num Set: bloqueia as mutações e depois congela.

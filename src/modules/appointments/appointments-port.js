@@ -34,7 +34,7 @@ import { dayFrameOf, workWindowsForDay } from '../availability/availability-engi
  *                                professionalId: string, professionalName: string, customerName: string }>,
  *                 versionKey: string }>,
  *   findBusyByBusiness(businessId: string,
- *                      filter: { professionalId: string|null },
+ *                      filter: { professionalId: string|null, excludeAppointmentId?: string|null },
  *                      fromIso: string, toIso: string, conn?: Database)
  *     : Promise<Map<string, Array<{ startsAt: string, endsAt: string }>>>,
  * }} AppointmentsPort
@@ -66,6 +66,8 @@ FIND_WEEKLY_IDS_MAX ids, e convertida no fuso do negócio).
  * chama DENTRO da transação, com a `tx`. Período de até 32 dias. Profissional
  * sem ocupado não aparece no Map: use `map.get(id) ?? []`. Se lançar, a disponibilidade responde
  * 503 AVAILABILITY_UNAVAILABLE (nunca lista otimista).
+ * `filter.excludeAppointmentId` (AF-12, critério 24): o agendamento sendo remarcado não ocupa (a
+ * consulta ganha `a.id <> ?`). Ausente ou null: sem filtro. `noAppointments` o ignora.
  */
 
 /**
@@ -146,8 +148,10 @@ export function createAppointmentsPort({ appointmentsRepository, workingHoursRep
       return { total, items, versionKey: conflictsVersionKey(rows) };
     },
 
-    async findBusyByBusiness(businessId, { professionalId = null } = {}, fromIso, toIso, conn) {
-      const rows = await repo.findBusy(businessId, professionalId ?? null, fromIso, toIso, conn);
+    async findBusyByBusiness(businessId, { professionalId = null, excludeAppointmentId = null } = {}, fromIso, toIso, conn) {
+      const rows = await repo.findBusy(businessId, professionalId ?? null, fromIso, toIso, conn, {
+        excludeAppointmentId: excludeAppointmentId ?? null,
+      });
       const map = new Map();
       for (const row of rows) {
         if (!map.has(row.professionalId)) map.set(row.professionalId, []);

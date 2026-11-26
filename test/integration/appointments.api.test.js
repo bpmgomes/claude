@@ -25,6 +25,9 @@ const SLUG = 'salao-da-ana';
 const FRIDAY = '2026-11-27';
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const KEY = '3b241101-e2bb-4255-8caf-4136c566a962';
+const MANAGE_URL_RE = /^https:\/\/agendafacil\.app\/agendamento\/[A-Za-z0-9_-]{43}$/;
+/** O token muda a cada resposta (AF-12): fora dele, os corpos se comparam byte a byte. */
+const withoutToken = (text) => text.replace(/\/agendamento\/[A-Za-z0-9_-]{43}/g, '/agendamento/<token>');
 
 let app;
 let clock;
@@ -66,6 +69,9 @@ function assertContractTree(json) {
     assert.deepEqual(Object.keys(a[nested]).sort(), [...F[nested]].sort(), nested);
     for (const value of Object.values(a[nested])) assert.notEqual(typeof value, 'object', `${nested} sem objetos aninhados`);
   }
+  // AF-12 (critério 8): o link de gerenciar e a política, sempre com as mesmas chaves.
+  assert.deepEqual(Object.keys(json.manage).sort(), [...F.manage].sort());
+  assert.match(json.manage.url, MANAGE_URL_RE);
 }
 
 function assertSecurityHeaders(res, label) {
@@ -85,7 +91,13 @@ describe('POST /api/public/:slug/appointments: contrato (critério 26)', () => {
     assert.equal(res.statusCode, 201, res.body);
     assert.match(res.headers['content-type'], /^application\/json/);
     assertContractTree(res.json());
-    assert.deepEqual(res.json(), {
+    const json = res.json();
+    assert.deepEqual(json, {
+      manage: {
+        url: json.manage.url,
+        cancellationLeadMinutes: 120,
+        policy: 'Você pode cancelar ou remarcar por este link até 2 h antes do horário.',
+      },
       appointment: {
         start: `${FRIDAY}T10:00`,
         end: `${FRIDAY}T11:00`,
@@ -377,7 +389,7 @@ describe('cabeçalhos, sessão e CSRF (critérios 30 e 41)', () => {
     const without = await post(body({ professionalId: pb.id }));
     assert.equal(withCookie.statusCode, 201);
     assert.equal(withCookie.headers['set-cookie'], undefined);
-    assert.equal(withCookie.body.replace('Ana Souza', 'X'), without.body.replace('Bia Lima', 'X'));
+    assert.equal(withoutToken(withCookie.body).replace('Ana Souza', 'X'), withoutToken(without.body).replace('Bia Lima', 'X'));
     assert.deepEqual(await app.db.get('SELECT last_seen_at FROM sessions'), before);
   });
 

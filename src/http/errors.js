@@ -1,3 +1,5 @@
+import { MANAGE_MESSAGES } from '../shared/appointments.js';
+
 const RATE_LIMITED_MESSAGE = 'Muitas tentativas. Aguarde um momento e tente novamente.';
 
 export class AppError extends Error {
@@ -112,6 +114,32 @@ export class SlotUnavailableError extends ConflictError {
     super('SLOT_UNAVAILABLE', SLOT_UNAVAILABLE_MESSAGE);
     this.name = 'SlotUnavailableError';
     this.suggestions = Array.isArray(suggestions) ? suggestions : [];
+  }
+}
+
+// Gerenciar o agendamento pelo link (AF-12, design 4.3). Mensagens fixas de MANAGE_MESSAGES.
+
+/** Status, prazo ou estado não permitem a alteração (409). `message`: uma das variantes fixas. */
+export class AppointmentNotChangeableError extends ConflictError {
+  constructor(message = MANAGE_MESSAGES.notChangeable) {
+    super('APPOINTMENT_NOT_CHANGEABLE', message);
+    this.name = 'AppointmentNotChangeableError';
+  }
+}
+
+/** A `version` enviada não é a do agendamento atual do link (409). */
+export class AppointmentChangedError extends ConflictError {
+  constructor() {
+    super('APPOINTMENT_CHANGED', MANAGE_MESSAGES.changed);
+    this.name = 'AppointmentChangedError';
+  }
+}
+
+/** A cadeia já tem 3 remarcações (409). */
+export class RescheduleLimitReachedError extends ConflictError {
+  constructor() {
+    super('RESCHEDULE_LIMIT_REACHED', MANAGE_MESSAGES.rescheduleLimit);
+    this.name = 'RescheduleLimitReachedError';
   }
 }
 

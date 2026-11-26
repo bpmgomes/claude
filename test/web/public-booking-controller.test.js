@@ -17,6 +17,7 @@ const {
   readyMessage,
   appointmentsUrl,
   confirmBooking,
+  safeManageUrl,
   createAttemptKeys,
   successDetails,
   safePhoneHref,
@@ -287,7 +288,7 @@ describe('confirmBooking (AF-11, critérios 25 e 29 a 30)', () => {
     const fetchFn = fakeFetch(201, { appointment: APPOINTMENT });
     const key = '3b241101-e2bb-4255-8caf-4136c566a962';
     const result = await confirmBooking('salao-da-ana', PAYLOAD, { fetchFn, idempotencyKey: key });
-    assert.deepEqual(result, { ok: true, appointment: APPOINTMENT });
+    assert.deepEqual(result, { ok: true, appointment: APPOINTMENT, manage: null });
     const { url, init } = fetchFn.calls[0];
     assert.equal(url, '/api/public/salao-da-ana/appointments');
     assert.equal(appointmentsUrl('a/b'), '/api/public/a%2Fb/appointments');
@@ -454,11 +455,50 @@ describe('sem relógio do navegador (critérios 12 e 18)', () => {
   });
 });
 
+describe('link de gerenciar no 201 (AF-12, critério 8)', () => {
+  const TOKEN = 'A'.repeat(21) + '_-' + 'b'.repeat(20);
+  const MANAGE = { url: `https://agendafacil.app/agendamento/${TOKEN}`, cancellationLeadMinutes: 120, policy: 'Você pode cancelar ou remarcar por este link até 2 h antes do horário.' };
+
+  test('confirmBooking devolve manage { url, policy } com link válido', async () => {
+    const result = await confirmBooking('s', PAYLOAD, { fetchFn: fakeFetch(201, { appointment: APPOINTMENT, manage: MANAGE }) });
+    assert.deepEqual(result, { ok: true, appointment: APPOINTMENT, manage: { url: MANAGE.url, policy: MANAGE.policy } });
+  });
+
+  test('manage null ou com URL fora do formato vira null (só o telefone aparece)', async () => {
+    for (const manage of [null, undefined, 'x', { url: 'javascript:alert(1)' }, { url: `https://x.app/outro/${TOKEN}` }]) {
+      const result = await confirmBooking('s', PAYLOAD, { fetchFn: fakeFetch(201, { appointment: APPOINTMENT, manage }) });
+      assert.equal(result.manage, null, JSON.stringify(manage));
+    }
+  });
+
+  test('safeManageUrl recusa javascript:, outro caminho, 42 caracteres, query e fragmento', () => {
+    assert.equal(safeManageUrl(MANAGE.url), MANAGE.url);
+    assert.equal(safeManageUrl(`http://127.0.0.1:3000/agendamento/${TOKEN}`), `http://127.0.0.1:3000/agendamento/${TOKEN}`);
+    for (const bad of [
+      `javascript:/agendamento/${TOKEN}`,
+      `https://x.app/agendamentos/${TOKEN}`,
+      `https://x.app/agendamento/${TOKEN.slice(1)}`,
+      `https://x.app/agendamento/${TOKEN}?a=1`,
+      `https://x.app/agendamento/${TOKEN}#x`,
+      `https://user@x.app/agendamento/${TOKEN}`,
+      `https://x.app/agendamento/${TOKEN.slice(1)}+`,
+      42,
+      null,
+    ]) {
+      assert.equal(safeManageUrl(bad), null, String(bad));
+    }
+  });
+});
+
 describe('JS público sem cookie e sem armazenamento (AF-04, critério 16)', () => {
   const WEB_JS = fileURLToPath(new URL('../../web/js/', import.meta.url));
 
   async function publicSources() {
-    const files = (await readdir(WEB_JS)).filter((f) => /^public-.*\.js$/.test(f) || f === 'customer-form-controller.js');
+    const files = (await readdir(WEB_JS)).filter(
+      (f) => /^public-.*\.js$/.test(f) || /^manage-.*\.js$/.test(f) || f === 'customer-form-controller.js',
+    );
+    assert.ok(files.includes('manage-controller.js'));
+    assert.ok(files.includes('manage-page.js'));
     assert.ok(files.includes('public-booking-controller.js'));
     assert.ok(files.includes('public-booking-page.js'));
     assert.ok(files.includes('customer-form-controller.js'));

@@ -122,8 +122,9 @@ test('toOwnerBusiness não expõe ownerId nem logoKey', async () => {
   const b = await repo.insert(business(ownerA, 'salao'));
   const out = toOwnerBusiness(b, { publicBaseUrl: 'https://agendafacil.app' });
   assert.deepEqual(Object.keys(out).sort(), [
-    'address', 'createdAt', 'id', 'logoUrl', 'name', 'phone', 'publicUrl', 'slug', 'timezone', 'updatedAt',
+    'address', 'cancellationLeadMinutes', 'createdAt', 'id', 'logoUrl', 'name', 'phone', 'publicUrl', 'slug', 'timezone', 'updatedAt',
   ]);
+  assert.equal(out.cancellationLeadMinutes, 120);
   assert.equal(out.publicUrl, 'https://agendafacil.app/salao');
   assert.equal(out.logoUrl, null);
 });

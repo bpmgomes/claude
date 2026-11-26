@@ -44,6 +44,22 @@ export function midnightIso(date, timeZone) {
 }
 
 /**
+ * `days` da resposta: com `specificId`, cada horário leva os índices dos profissionais livres na
+ * lista de elegíveis (`indexOf`); sem, só `{ start, end }` (AF-11, decisão 4).
+ */
+function serializeDays(result, { specificId, indexOf }) {
+  return result.days.map((day) => ({
+    date: day.date,
+    weekday: day.weekday,
+    slots: day.slots.map((slot) =>
+      specificId
+        ? { start: slot.start, end: slot.end, professionals: slot.professionalIds.map((id) => indexOf.get(id)) }
+        : { start: slot.start, end: slot.end },
+    ),
+  }));
+}
+
+/**
  * Horários disponíveis da página pública (design AF-10, 5.1). Somente leitura e sem transação: a
  * disponibilidade é uma fotografia, e a autoridade é a checagem transacional do AF-11.
  * No máximo 7 consultas (6 até o AF-11), independentes do número de profissionais e de dias.
@@ -76,9 +92,9 @@ export function createAvailabilityService({
   const bookableDeps = { servicesRepository, professionalsRepository };
 
   /** Falha da porta vira 503: nunca mostrar horário ocupado como livre. */
-  async function readLayersOr503(businessId, eligible, specificId, fromIso, toIso) {
+  async function readLayersOr503(businessId, eligible, specificId, fromIso, toIso, options) {
     try {
-      return await readLayers(layersDeps, businessId, eligible, specificId, fromIso, toIso);
+      return await readLayers(layersDeps, businessId, eligible, specificId, fromIso, toIso, undefined, options);
     } catch (err) {
       if (!(err instanceof BusyUnavailableError)) throw err;
       log.warn({
@@ -158,15 +174,44 @@ export function createAvailabilityService({
         durationMinutes: service.durationMinutes,
         stepMinutes: SLOT_STEP_MINUTES,
         professionals: ids,
-        days: result.days.map((day) => ({
-          date: day.date,
-          weekday: day.weekday,
-          slots: day.slots.map((slot) =>
-            specificId
-              ? { start: slot.start, end: slot.end, professionals: slot.professionalIds.map((id) => indexOf.get(id)) }
-              : { start: slot.start, end: slot.end },
-          ),
-        })),
+        days: serializeDays(result, { specificId, indexOf }),
+        truncated: result.truncated,
+      };
+    },
+
+    /**
+     * Horários de UM dia para remarcar (AF-12, critério 24): as regras do AF-10 (antecedência de 1 h,
+     * grade, bloqueios, ocupados) para o mesmo serviço, com o agendamento `excludeAppointmentId`
+     * fora dos ocupados. Mesmo formato do AF-10 sem `professionals`, e horários sempre `{ start, end }`.
+     * Somente leitura, fora de transação; quem decide é o reschedule, na transação.
+     * @param {{ business: { id: string, timezone: string }, serviceId: string, professionalId: string,
+     *   date: string, nowMs: number, excludeAppointmentId: string }} args `professionalId`: UUID ou 'any'
+     * @throws {NotFoundError} serviço/profissional não reservável (o manage traduz em 409)
+     * @throws {ServiceUnavailableError} AVAILABILITY_UNAVAILABLE (o manage traduz em MANAGE_UNAVAILABLE)
+     */
+    async findForReschedule({ business, serviceId, professionalId, date, nowMs, excludeAppointmentId }) {
+      const timeZone = business.timezone || DEFAULT_TIME_ZONE;
+      const { service, eligible } = await resolveBookable(bookableDeps, business.id, { serviceId, professionalId });
+      const specificId = professionalId === ANY_PROFESSIONAL ? null : professionalId;
+      const fromIso = midnightIso(date, timeZone);
+      const toIso = midnightIso(addLocalDays(date, 1), timeZone);
+      const professionals = await readLayersOr503(business.id, eligible, specificId, fromIso, toIso, { excludeAppointmentId });
+      const result = engine({
+        timeZone,
+        fromDate: date,
+        toDate: date,
+        durationMinutes: service.durationMinutes,
+        notBeforeMs: nowMs + MIN_LEAD_MINUTES * MINUTE_MS,
+        professionals,
+      });
+      return {
+        timezone: timeZone,
+        now: instantToLocal(nowMs, timeZone),
+        from: date,
+        to: date,
+        durationMinutes: service.durationMinutes,
+        stepMinutes: SLOT_STEP_MINUTES,
+        days: serializeDays(result, { specificId: null }),
         truncated: result.truncated,
       };
     },
@@ -177,8 +222,10 @@ export function createAvailabilityService({
      * serviço; com um UUID, o mesmo profissional; com 'any', qualquer elegível (um início conta uma
      * vez). Fora de transação, sem trava. Falha da porta, 404 (o serviço sumiu nesse meio-tempo) ou
      * erro de leitura: [] com log warn.
+     * `excludeAppointmentId` (AF-12): o agendamento sendo remarcado não ocupa.
      * @param {{ business: { id: string, timezone: string }, serviceId: string, professionalId: string,
-     *   afterStart: string, nowMs: number, limit?: number, leadMinutes?: number }} args
+     *   afterStart: string, nowMs: number, limit?: number, leadMinutes?: number,
+     *   excludeAppointmentId?: string|null }} args
      * @returns {Promise<Array<{ start: string, end: string }>>}
      */
     async findSuggestions({
@@ -189,6 +236,7 @@ export function createAvailabilityService({
       nowMs,
       limit = BOOKING_SUGGESTIONS_MAX,
       leadMinutes = MIN_LEAD_MINUTES,
+      excludeAppointmentId = null,
     }) {
       try {
         const timeZone = business.timezone || DEFAULT_TIME_ZONE;
@@ -204,7 +252,9 @@ export function createAvailabilityService({
         if (date > lastDate) return [];
         const fromIso = midnightIso(date, timeZone);
         const toIso = midnightIso(addLocalDays(lastDate, 1), timeZone);
-        const professionals = await readLayers(layersDeps, business.id, eligible, specificId, fromIso, toIso);
+        const professionals = await readLayers(layersDeps, business.id, eligible, specificId, fromIso, toIso, undefined, {
+          excludeAppointmentId,
+        });
         const result = engine({
           timeZone,
           fromDate: date,

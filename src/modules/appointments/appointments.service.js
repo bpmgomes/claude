@@ -26,11 +26,19 @@ import { midnightIso } from '../availability/availability.service.js';
 import { resolveBookable } from '../availability/bookable.js';
 import { readLayers, BusyUnavailableError } from '../availability/availability-layers.js';
 import { toPublicAppointment } from './appointments.view.js';
-import { noAppointmentEvents } from './appointment-events-port.js';
+import { noAppointmentEvents, emitAfterCommit } from './appointment-events-port.js';
+import { newManageToken, manageUrlOf } from './manage-token.js';
+import { createManageTokensRepository } from './manage-tokens.repository.js';
+import { createReschedulesRepository } from './reschedules.repository.js';
+import { toManageLink } from './manage.view.js';
+import { MANAGE_TOKEN_RETENTION_DAYS, RESCHEDULES_PER_CHAIN_MAX } from '../../shared/appointments.js';
 
 const noopLog = { info() {}, warn() {}, error() {} };
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
+/** Lote da purga oportunista dos tokens vencidos, na transação da reserva (AF-12, 5.6). */
+const MANAGE_TOKENS_PURGE_BATCH = 100;
 
 /** Índice único parcial do mesmo início (rede mínima portátil, 3.1). */
 const SAME_START_CONSTRAINT = 'appointments_professional_id_starts_at_unique';
@@ -82,6 +90,9 @@ function requestHashOf({ serviceId, professionalId, start }, customer) {
  *   customersService: import('../customers/customers.service.js').CustomersPort,
  *   availabilityService: ReturnType<typeof import('../availability/availability.service.js').createAvailabilityService>,
  *   appointmentEvents?: import('./appointment-events-port.js').AppointmentEventsPort,
+ *   manageTokensRepository?: ReturnType<typeof import('./manage-tokens.repository.js').createManageTokensRepository>,
+ *   publicBaseUrl?: string,                  // base do link de gerenciar (AF-12); nunca o Host
+ *   newToken?: typeof newManageToken,        // injetável nos testes
  *   now?: () => Date,
  *   log?: { info: Function, warn: Function, error: Function },
  *   newId?: () => string,
@@ -100,6 +111,10 @@ export function createAppointmentsService({
   customersService,
   availabilityService,
   appointmentEvents = noAppointmentEvents,
+  manageTokensRepository = createManageTokensRepository(db),
+  reschedulesRepository = createReschedulesRepository(db),
+  publicBaseUrl = '',
+  newToken = newManageToken,
   now = () => new Date(),
   log = noopLog,
   newId = randomUUID,
@@ -108,61 +123,18 @@ export function createAppointmentsService({
   const bookableDeps = { servicesRepository, professionalsRepository };
   const layersDeps = { workingHoursRepository, timeBlocksRepository, appointments };
 
-  function logEventFailed(appointmentId, err) {
-    log.warn({ event: 'appointment_event_failed', appointmentId, errCode: err?.code, errName: err?.name });
-  }
-
-  /** Depois do COMMIT, sem await: nada do que a porta faça muda o 201 (critério 44). */
-  function emitConfirmed(appointmentId, businessId) {
-    try {
-      queueMicrotask(() => {
-        let pending;
-        try {
-          pending = appointmentEvents.confirmed({ appointmentId, businessId });
-        } catch (err) {
-          logEventFailed(appointmentId, err);
-          return;
-        }
-        Promise.resolve(pending).catch((err) => logEventFailed(appointmentId, err));
-      });
-    } catch (err) {
-      logEventFailed(appointmentId, err);
-    }
-  }
-
   /**
-   * Checagem e gravação transacional reaproveitável (critério 45; AF-12 remarcar, AF-15 manual).
-   * Precisa rodar dentro de db.transaction e usa SÓ `tx` (critério 24). Não captura erros: o
-   * chamador desfaz. Ordem (critério 46): resolução, travas (services -> professionals por id),
-   * cliente, recheck pelo motor, escolha do profissional, limite por cliente e inserção.
+   * Passos 1 e 2 do bookSlot (AF-11 5.2), extraídos (AF-12, decisão 5): resolução autoritativa e
+   * travas na ordem global services -> professionals (por id). Nunca businesses. Idempotente dentro
+   * da mesma transação (os UPDATE não têm efeito). Usa SÓ `tx`.
    * @param {import('../../db/index.js').Database} tx
-   * @param {{
-   *   business: { id: string, timezone: string },
-   *   serviceId: string, professionalId: string, start: string,   // já validados (formato)
-   *   customerInput: unknown,                 // validado de novo por findOrCreate
-   *   nowMs: number,
-   *   leadMinutes?: number,                   // padrão MIN_LEAD_MINUTES (60); o AF-15 passa 0
-   *   customerLimit?: number|null,            // padrão 3; null desliga (AF-15, dono)
-   * }} args
-   * @returns {Promise<{ appointmentId: string, professional: { id: string, name: string },
-   *   service: import('../services/services.repository.js').ServiceSnapshot,
-   *   startsAt: string, endsAt: string, start: string, end: string, weekday: number }>}
-   * @throws {NotFoundError|SlotUnavailableError|ConflictError|import('../availability/availability-layers.js').BusyUnavailableError}
+   * @param {{ business: { id: string }, serviceId: string, professionalId: string }} args
+   *   `professionalId`: UUID ou 'any'
+   * @returns {Promise<{ service: object, eligible: object[] }>} `eligible` já filtrado pelos travados
+   * @throws {NotFoundError}
    */
-  async function bookSlot(tx, args) {
-    const {
-      business,
-      serviceId,
-      professionalId,
-      start,
-      customerInput,
-      nowMs,
-      leadMinutes = MIN_LEAD_MINUTES,
-      customerLimit = CUSTOMER_FUTURE_APPOINTMENTS_MAX,
-    } = args;
-    const timeZone = business.timezone || DEFAULT_TIME_ZONE;
+  async function lockForBooking(tx, { business, serviceId, professionalId }) {
     const specificId = professionalId === ANY_PROFESSIONAL ? null : professionalId;
-
     // 1. Resolução autoritativa (o serviço ou o profissional podem ter mudado desde a pré-checagem).
     const resolved = await resolveBookable(bookableDeps, business.id, { serviceId, professionalId }, tx);
     const { service } = resolved;
@@ -183,9 +155,70 @@ export function createAppointmentsService({
       eligible = eligible.filter((p) => claimed.has(p.id));
       if (eligible.length === 0) throw new NotFoundError();
     }
+    return { service, eligible };
+  }
 
-    // 3. Cliente: sempre INSERT ... DO NOTHING + SELECT (mesmo caminho para novo e antigo, critério 40).
-    const { customerId, snapshot } = await customersService.findOrCreate(business.id, customerInput, tx);
+  /**
+   * Checagem e gravação transacional reaproveitável (critério 45; AF-12 remarcar, AF-15 manual).
+   * Precisa rodar dentro de db.transaction e usa SÓ `tx` (critério 24). Não captura erros: o
+   * chamador desfaz. Ordem (critério 46): resolução, travas (services -> professionals por id),
+   * cliente, recheck pelo motor, escolha do profissional, limite por cliente e inserção.
+   * @param {import('../../db/index.js').Database} tx
+   * @param {{
+   *   business: { id: string, timezone: string },
+   *   serviceId: string, professionalId: string, start: string,   // já validados (formato)
+   *   customerInput?: unknown,                // AF-11: validado de novo por findOrCreate
+   *   customerId?: string,                    // AF-12/AF-15: cliente existente, sem findOrCreate
+   *   customerSnapshot?: { name: string, phone: string },  // snapshot gravado (o do agendamento antigo)
+   *   nowMs: number,
+   *   leadMinutes?: number,                   // padrão MIN_LEAD_MINUTES (60); o AF-15 passa 0
+   *   customerLimit?: number|null,            // padrão 3; null desliga (AF-15, dono)
+   * }} args
+   * @returns {Promise<{ appointmentId: string, professional: { id: string, name: string },
+   *   service: import('../services/services.repository.js').ServiceSnapshot,
+   *   startsAt: string, endsAt: string, start: string, end: string, weekday: number }>}
+   * Exatamente um dos dois modos de cliente (`customerInput`, ou `customerId` + `customerSnapshot`).
+   * Os dois ou nenhum: TypeError (erro de programação; o chamador responde 503). Com `customerId`, o
+   * limite por cliente usa `customerId` e `customerSnapshot.phone`; o resto do fluxo é idêntico.
+   * @throws {NotFoundError|SlotUnavailableError|ConflictError|TypeError|import('../availability/availability-layers.js').BusyUnavailableError}
+   */
+  async function bookSlot(tx, args) {
+    const {
+      business,
+      serviceId,
+      professionalId,
+      start,
+      customerInput,
+      customerId: existingCustomerId,
+      customerSnapshot,
+      nowMs,
+      leadMinutes = MIN_LEAD_MINUTES,
+      customerLimit = CUSTOMER_FUTURE_APPOINTMENTS_MAX,
+    } = args;
+    const byInput = customerInput !== undefined;
+    const byId = existingCustomerId !== undefined;
+    if (byInput === byId) throw new TypeError('bookSlot: informe customerInput OU customerId + customerSnapshot.');
+    if (
+      byId &&
+      (typeof existingCustomerId !== 'string' ||
+        !isPlainObject(customerSnapshot) ||
+        typeof customerSnapshot.name !== 'string' ||
+        typeof customerSnapshot.phone !== 'string')
+    ) {
+      throw new TypeError('bookSlot: customerId exige customerSnapshot { name, phone }.');
+    }
+    const timeZone = business.timezone || DEFAULT_TIME_ZONE;
+    const specificId = professionalId === ANY_PROFESSIONAL ? null : professionalId;
+
+    // 1 e 2. Resolução autoritativa e travas (lockForBooking).
+    const locked = await lockForBooking(tx, { business, serviceId, professionalId });
+    const { service, eligible } = locked;
+
+    // 3. Cliente: sempre INSERT ... DO NOTHING + SELECT (mesmo caminho para novo e antigo, critério 40);
+    // com cliente existente (AF-12), sem findOrCreate nem nova validação de dados pessoais.
+    const { customerId, snapshot } = byId
+      ? { customerId: existingCustomerId, snapshot: { name: customerSnapshot.name, phone: customerSnapshot.phone } }
+      : await customersService.findOrCreate(business.id, customerInput, tx);
 
     // 4. Recheck com o motor do AF-10, só com leituras na `tx` (critério 10).
     const date = start.slice(0, 10);
@@ -270,8 +303,44 @@ export function createAppointmentsService({
     };
   }
 
+  /**
+   * QA D2: o agendamento atual da cadeia de remarcações que começa em `appointmentId` (o último elo;
+   * ativo ou, se a cadeia terminou cancelada, o último cancelado). A cadeia tem no máximo
+   * RESCHEDULES_PER_CHAIN_MAX elos; o laço é limitado por isso. Só leituras na `tx`.
+   * @returns {Promise<import('./appointments.repository.js').AppointmentRow|null>}
+   */
+  async function currentOfChain(tx, businessId, appointmentId) {
+    let id = appointmentId;
+    for (let hop = 0; hop < RESCHEDULES_PER_CHAIN_MAX; hop++) {
+      const next = await reschedulesRepository.nextOf(id, businessId, tx);
+      if (!next) break;
+      id = next;
+    }
+    return appointmentsRepository.findById(id, businessId, tx);
+  }
+
+  /** Token novo do agendamento, na transação. Cancelado: já nasce revogado (todos revogados juntos). */
+  async function issueManageToken(tx, { businessId, appointmentId, expiresAt, status, nowIso }) {
+    const { token, tokenHash } = newToken();
+    const cancelled = status === 'cancelled';
+    await manageTokensRepository.insert(
+      {
+        tokenHash,
+        businessId,
+        appointmentId,
+        createdAt: nowIso,
+        expiresAt,
+        revokedAt: cancelled ? nowIso : null,
+        revokedReason: cancelled ? 'cancelled' : null,
+      },
+      tx,
+    );
+    return manageUrlOf(publicBaseUrl, token);
+  }
+
   return {
     bookSlot,
+    lockForBooking,
 
     /**
      * Fluxo público (design 5.1). `idempotencyKey` vem do cabeçalho (string ou undefined).
@@ -320,11 +389,32 @@ export function createAppointmentsService({
             const hit = await appointmentsRepository.findIdempotency(business.id, key, nowIso, tx);
             if (hit) {
               if (hit.requestHash !== requestHash) throw new IdempotencyKeyReusedError();
-              return { replay: JSON.parse(hit.responseBody), appointmentId: hit.appointmentId };
+              // AF-12 (decisão 3): o corpo guardado não tem token; a repetição emite OUTRO token ativo
+              // do mesmo agendamento, se ele ainda não terminou (senão o link já daria 404).
+              const row = await currentOfChain(tx, business.id, hit.appointmentId);
+              let manageUrl = null;
+              if (row && row.endsAt > nowIso) {
+                manageUrl = await issueManageToken(tx, {
+                  businessId: business.id,
+                  appointmentId: row.id,
+                  expiresAt: row.endsAt,
+                  status: row.status,
+                  nowIso,
+                });
+              }
+              return { replay: hit.responseBody, appointmentId: hit.appointmentId, manageUrl };
             }
           }
           const booked = await bookSlot(tx, { business, serviceId, professionalId, start, customerInput, nowMs });
           const responseBody = toPublicAppointment({ booked, business, timezone: timeZone });
+          // AF-12 (critérios 4, 5 e 8): o token nasce na transação da reserva; só o hash é gravado.
+          const manageUrl = await issueManageToken(tx, {
+            businessId: business.id,
+            appointmentId: booked.appointmentId,
+            expiresAt: booked.endsAt,
+            status: APPOINTMENT_STATUS_CONFIRMED,
+            nowIso,
+          });
           if (key) {
             await appointmentsRepository.insertIdempotency(
               {
@@ -340,7 +430,13 @@ export function createAppointmentsService({
             );
           }
           await appointmentsRepository.purgeIdempotency(business.id, nowIso, tx);
-          return { booked, responseBody };
+          await manageTokensRepository.purgeExpired(
+            business.id,
+            new Date(nowMs - MANAGE_TOKEN_RETENTION_DAYS * DAY_MS).toISOString(),
+            { batch: MANAGE_TOKENS_PURGE_BATCH },
+            tx,
+          );
+          return { booked, responseBody, manageUrl };
         });
 
       let outcome;
@@ -381,11 +477,12 @@ export function createAppointmentsService({
         throw new ServiceUnavailableError('BOOKING_UNAVAILABLE', M.unavailable);
       }
 
-      if (outcome.replay) {
+      if (outcome.replay !== undefined) {
         log.info({ event: 'appointment_replayed', businessId: business.id, appointmentId: outcome.appointmentId });
-        return { status: 201, body: outcome.replay };
+        const manage = outcome.manageUrl ? toManageLink({ url: outcome.manageUrl, business }) : null;
+        return { status: 201, body: { ...JSON.parse(outcome.replay), manage } };
       }
-      const { booked, responseBody } = outcome;
+      const { booked, responseBody, manageUrl } = outcome;
       log.info({
         event: 'appointment_created',
         businessId: business.id,
@@ -394,8 +491,8 @@ export function createAppointmentsService({
         target,
         durationMinutes: booked.service.durationMinutes,
       });
-      emitConfirmed(booked.appointmentId, business.id);
-      return { status: 201, body: responseBody };
+      emitAfterCommit(appointmentEvents, 'confirmed', { appointmentId: booked.appointmentId, businessId: business.id, manageUrl }, log);
+      return { status: 201, body: { ...responseBody, manage: toManageLink({ url: manageUrl, business }) } };
     },
 
     /** Boot: purga as chaves expiradas em lotes; nunca impede a subida (falha só é logada). */

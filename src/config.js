@@ -34,9 +34,13 @@ import { randomBytes } from 'node:crypto';
  *   `GET /api/public/:slug/availability`), sem multiplicar o limite por rota (AF-10, critério 25).
  * - `rateLimit.publicAvailability` (`{ perIp: 30 }` por minuto): teto de custo ADICIONAL, só para o
  *   endpoint de horários. Cada consulta consome os dois contadores.
- * - `rateLimit.publicBooking` (`{ perIp: 10 }` por minuto): teto de escrita ADICIONAL, só para
- *   `POST /api/public/:slug/appointments` (AF-11, critério 41). A mesma requisição consome também o
- *   contador compartilhado `publicPage`.
+ * - `rateLimit.publicBooking` (`{ perIp: 10 }` por minuto): teto de escrita ADICIONAL e COMPARTILHADO
+ *   (um limitador só, criado no buildApp) entre `POST /api/public/:slug/appointments` (AF-11, critério
+ *   41) e as escritas do AF-12 (`POST /api/public/manage/:token/cancel` e `.../reschedule`), sem
+ *   multiplicar o limite entre rotas. A mesma requisição consome também o contador `publicPage`.
+ * - `rateLimit.publicManage` (`{ perIp: 30 }` por minuto): teto de leitura ADICIONAL, um contador só
+ *   para `GET /api/public/manage/:token` e `GET /api/public/manage/:token/availability` (AF-12,
+ *   critério 33). A mesma requisição consome também o contador `publicPage`.
  * - `rateLimit.malformedUrl` (`{ perIp: 120 }` por minuto): contador barato por IP do JSON 400 de URL
  *   malformada (`frameworkErrors`, AF-09 item 1). O 404 HTML de URL malformada usa `publicPage`.
  * - `rateLimit.publicMedia` (`{ perIp: 600 }` por minuto: `/media/logos/:file` e
@@ -93,6 +97,7 @@ export function loadConfig(env = process.env) {
       publicPage: { perIp: 120 },
       publicAvailability: { perIp: 30 },
       publicBooking: { perIp: 10 },
+      publicManage: { perIp: 30 },
       malformedUrl: { perIp: 120 },
       publicMedia: { perIp: 600 },
     },

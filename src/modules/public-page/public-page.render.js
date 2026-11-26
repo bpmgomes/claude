@@ -178,13 +178,22 @@ function customerForm(business) {
 
 /**
  * Tela de sucesso (AF-11, 4.4), vazia e oculta: os dados do 201 entram só por `textContent`. Não
- * promete e-mail nem link de cancelar (critério 28).
+ * promete e-mail. Desde o AF-12 (critério 8, que substitui o critério 28 do AF-11), o bloco
+ * "Gerenciar agendamento" fica oculto e sem `href` no HTML: o JS o preenche só com o link válido do
+ * 201 (`manage.url`) e a política vinda do servidor. O telefone continua sempre visível, e é o único
+ * caminho quando `manage` é null.
  */
 function successSection(business) {
   return html`<section class="pp-success" hidden tabindex="-1" aria-labelledby="sucesso-titulo">
 <h2 id="sucesso-titulo" tabindex="-1">Agendamento confirmado</h2>
 <dl class="pp-success-details"></dl>
-<p class="pp-success-phone">Para mudar ou cancelar, ligue para <a class="pp-success-phone-link" href="${business.phoneHref}">${business.phoneDisplay}</a>.</p>
+<div class="pp-success-manage" hidden>
+<p class="pp-success-policy"></p>
+<p><a class="pp-success-manage-link" rel="noreferrer">Gerenciar agendamento (cancelar ou remarcar)</a></p>
+<p class="pp-success-manage-url"></p>
+<p class="pp-success-manage-warning">Guarde este link: é por ele que você cancela ou remarca. Não compartilhe; quem tiver o link pode alterar o agendamento.</p>
+</div>
+<p class="pp-success-phone">Se preferir, ligue para <a class="pp-success-phone-link" href="${business.phoneHref}">${business.phoneDisplay}</a>.</p>
 </section>`;
 }
 

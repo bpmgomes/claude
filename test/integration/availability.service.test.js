@@ -237,3 +237,69 @@ describe('consultas constantes (critério 23)', () => {
     }
   });
 });
+
+describe('AF-12: findForReschedule e findSuggestions com excludeAppointmentId (critérios 24 e 30)', () => {
+  let app;
+  let ana;
+  let corte;
+  let a;
+  let b;
+  let business;
+  const EXCLUDED = '3b241101-e2bb-4255-8caf-4136c566a962';
+  const nowMs = Date.parse(NOW);
+
+  beforeEach(async () => {
+    ({ app } = await buildTestApp({ now: createClock(NOW).now }));
+    ana = await signupAndLogin(app);
+    await createBusinessFor(app, ana);
+    corte = await createService(app, ana, { name: 'Corte', durationMinutes: 60 });
+    a = await createProfessional(app, ana, { name: 'Ana', serviceIds: [corte.id] });
+    b = await createProfessional(app, ana, { name: 'Bia', serviceIds: [corte.id] });
+    for (const p of [a, b]) assert.equal((await putHours(app, ana, p.id, WEEK_9_TO_18)).statusCode, 200);
+    business = await app.db.get('SELECT id, timezone FROM businesses');
+  });
+
+  afterEach(() => app.close());
+
+  test('findForReschedule: a porta recebe excludeAppointmentId e o dia local; resposta sem professionals', async () => {
+    const appointments = fakeAppointments({
+      busy: { [a.id]: [{ startsAt: '2026-11-27T13:00:00.000Z', endsAt: '2026-11-27T14:00:00.000Z' }] },
+    });
+    const service = serviceFor(app, { appointments, now: () => new Date(nowMs) });
+    const res = await service.findForReschedule({
+      business,
+      serviceId: corte.id,
+      professionalId: a.id,
+      date: '2026-11-27',
+      nowMs,
+      excludeAppointmentId: EXCLUDED,
+    });
+    assert.deepEqual(appointments.calls, [
+      {
+        businessId: business.id,
+        filter: { professionalId: a.id, excludeAppointmentId: EXCLUDED },
+        fromIso: '2026-11-27T03:00:00.000Z',
+        toIso: '2026-11-28T03:00:00.000Z',
+      },
+    ]);
+    assert.equal(res.from, '2026-11-27');
+    assert.equal(res.to, '2026-11-27');
+    assert.equal('professionals' in res, false);
+    const starts = res.days[0].slots.map((s) => s.start.slice(11));
+    assert.equal(starts.includes('10:00'), false, 'a porta falsa não exclui: o ocupado continua');
+    assert.ok(starts.includes('11:00'));
+    for (const slot of res.days[0].slots) assert.deepEqual(Object.keys(slot).sort(), ['end', 'start']);
+  });
+
+  test('findSuggestions repassa o filtro; sem ele a porta recebe só professionalId; getAvailability não muda', async () => {
+    const appointments = fakeAppointments();
+    const service = serviceFor(app, { appointments, now: () => new Date(nowMs) });
+    const input = { business, serviceId: corte.id, professionalId: 'any', afterStart: '2026-11-27T10:00', nowMs };
+    await service.findSuggestions({ ...input, excludeAppointmentId: EXCLUDED });
+    await service.findSuggestions(input);
+    await service.getAvailability('salao-da-ana', { serviceId: corte.id, professionalId: b.id, from: '2026-11-27' });
+    assert.deepEqual(appointments.calls[0].filter, { professionalId: null, excludeAppointmentId: EXCLUDED });
+    assert.deepEqual(appointments.calls[1].filter, { professionalId: null });
+    assert.deepEqual(appointments.calls[2].filter, { professionalId: b.id });
+  });
+});

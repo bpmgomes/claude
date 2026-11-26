@@ -332,8 +332,27 @@ function start(root, customer) {
     suggestionsEl.hidden = suggestions.length === 0;
   }
 
+  /**
+   * Bloco "Gerenciar agendamento" (AF-12, critério 8): só com link válido; só textContent. Nada fica
+   * guardado no navegador nem vai para a URL (critério 9).
+   */
+  function showManage(manage) {
+    const block = success.querySelector('.pp-success-manage');
+    if (!block) return;
+    const link = block.querySelector('.pp-success-manage-link');
+    if (!manage || !manage.url || !link) {
+      block.hidden = true;
+      if (link) link.removeAttribute('href');
+      return;
+    }
+    link.href = manage.url;
+    block.querySelector('.pp-success-policy').textContent = manage.policy;
+    block.querySelector('.pp-success-manage-url').textContent = manage.url;
+    block.hidden = false;
+  }
+
   /** Tela de sucesso, com foco no título (critério 27). */
-  function showSuccess(appointment) {
+  function showSuccess(appointment, manage) {
     latest.next();
     const details = success.querySelector('.pp-success-details');
     details.replaceChildren();
@@ -351,6 +370,7 @@ function start(root, customer) {
       link.href = href;
       link.textContent = String(business.phoneDisplay);
     }
+    showManage(manage);
     root.hidden = true;
     success.hidden = false;
     // Nada na URL (critério 28).
@@ -385,7 +405,7 @@ function start(root, customer) {
     }
     if (result.ok) {
       attempts.reset();
-      showSuccess(result.appointment);
+      showSuccess(result.appointment, result.manage);
       return;
     }
     // Rede e 5xx: mesma chave na próxima tentativa; 4xx: chave nova.

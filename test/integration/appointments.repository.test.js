@@ -462,3 +462,30 @@ describe('porta real de agendamentos (critérios 32 a 34 e 37)', () => {
     assert.equal(n, OUTSIDE_HOURS_SCAN_MAX);
   });
 });
+
+describe('cancelIfConfirmed (AF-12, critérios 17 e 21)', () => {
+  beforeEach(setup);
+  afterEach(() => app.close());
+
+  const repo = () => app.services.appointmentsRepository;
+  const read = (id) => app.db.get('SELECT status, cancelled_at, updated_at FROM appointments WHERE id = ?', [id]);
+
+  test('changes 1 grava cancelled_at e updated_at; de novo dá 0 e nada muda', async () => {
+    const id = await insert();
+    const nowIso = '2026-11-26T12:30:00.000Z';
+    assert.equal((await repo().cancelIfConfirmed(id, business.id, nowIso)).changes, 1);
+    assert.deepEqual({ ...(await read(id)) }, { status: 'cancelled', cancelled_at: nowIso, updated_at: nowIso });
+    const again = await app.db.transaction((tx) => repo().cancelIfConfirmed(id, business.id, '2026-11-26T13:00:00.000Z', tx));
+    assert.equal(again.changes, 0);
+    assert.deepEqual({ ...(await read(id)) }, { status: 'cancelled', cancelled_at: nowIso, updated_at: nowIso });
+  });
+
+  test('de outro negócio e completed dão changes 0', async () => {
+    const id = await insert();
+    assert.equal((await repo().cancelIfConfirmed(id, randomUUID(), NOW)).changes, 0);
+    assert.equal((await read(id)).status, 'confirmed');
+    const done = await insert({ startsAt: at('13:00'), status: 'completed' });
+    assert.equal((await repo().cancelIfConfirmed(done, business.id, NOW)).changes, 0);
+    assert.equal((await read(done)).status, 'completed');
+  });
+});

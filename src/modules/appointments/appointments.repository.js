@@ -131,15 +131,21 @@ export function createAppointmentsRepository(db) {
 
     /**
      * Ocupados não cancelados de profissionais ativos que intersectam [fromIso, toIso). Uma consulta
-     * por business_id (`professionalId` null = todos os ativos).
+     * por business_id (`professionalId` null = todos os ativos). `excludeAppointmentId` (AF-12) tira
+     * um agendamento do resultado.
      * @returns {Promise<Array<{ professionalId: string, startsAt: string, endsAt: string }>>}
      */
-    async findBusy(businessId, professionalId, fromIso, toIso, conn = db) {
+    async findBusy(businessId, professionalId, fromIso, toIso, conn = db, { excludeAppointmentId } = {}) {
       const params = [businessId, lowerBound(fromIso), toIso, fromIso];
       let filter = '';
       if (professionalId) {
         filter = ' AND a.professional_id = ?';
         params.push(professionalId);
+      }
+      // AF-12 (critério 24): o agendamento sendo remarcado não ocupa. O termo só filtra (mesmo índice).
+      if (excludeAppointmentId) {
+        filter += ' AND a.id <> ?';
+        params.push(excludeAppointmentId);
       }
       const rows = await conn.all(
         `SELECT a.professional_id, a.starts_at, a.ends_at FROM appointments a ${ACTIVE_PROFESSIONAL_JOIN}
@@ -148,6 +154,19 @@ export function createAppointmentsRepository(db) {
         params,
       );
       return rows.map((r) => ({ professionalId: r.professional_id, startsAt: r.starts_at, endsAt: r.ends_at }));
+    },
+
+    /**
+     * Cancela só se ainda `confirmed` (AF-12 critério 21; AF-11 4.5; AF-22 seção 4). O chamador exige
+     * `changes === 1`. O trigger `_update` não recusa a passagem para `cancelled`.
+     * @returns {Promise<{ changes: number }>}
+     */
+    async cancelIfConfirmed(id, businessId, nowIso, conn = db) {
+      return conn.run(
+        `UPDATE appointments SET status = 'cancelled', cancelled_at = ?, updated_at = ?
+          WHERE id = ? AND business_id = ? AND status = 'confirmed'`,
+        [nowIso, nowIso, id, businessId],
+      );
     },
 
     /** @returns {Promise<number>} conflitos do bloqueio (total real) */

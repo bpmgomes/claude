@@ -70,6 +70,7 @@ function businessLimits({
   malformedUrl,
   publicMedia,
   publicBooking,
+  publicManage,
 } = {}) {
   return {
     enabled: true,
@@ -87,6 +88,7 @@ function businessLimits({
     malformedUrl: malformedUrl || { perIp: 100 },
     publicMedia: publicMedia || { perIp: 100 },
     publicBooking: publicBooking || { perIp: 100 },
+    publicManage: publicManage || { perIp: 100 },
   };
 }
 
@@ -978,5 +980,86 @@ test('contador compartilhado: com publicPage.perIp 3, 2 páginas e 1 POST esgota
     } finally {
       await app.close();
     }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AF-12 (critério 33): teto de leitura publicManage e teto de escrita publicBooking compartilhado.
+// ---------------------------------------------------------------------------
+
+const { bookWithLink, getManage, manageAvailability, cancelManage, rescheduleManage, versionOf } = await import('../helpers/manage.js');
+
+async function bookedLink(app, seed, i) {
+  const { token } = await bookWithLink(
+    app,
+    seed.slug,
+    bookingBody({
+      serviceId: seed.services[0].id,
+      professionalId: seed.professionals[0].id,
+      start: `2026-11-27T${['09:00', '10:00', '11:00', '13:00', '14:00', '15:00'][i]}`,
+      customer: { phone: `(11) 9765${i}-321${i}` },
+    }),
+    { remoteAddress: '10.9.9.9' },
+  );
+  return token;
+}
+
+test('publicManage.perIp 2: resumo e horários dividem o contador; o 3º dá 429 JSON; token inexistente também consome; outro IP passa', async () => {
+  const { app, seed } = await availabilityApp({ publicPage: { perIp: 100 }, publicManage: { perIp: 2 } });
+  try {
+    const token = await bookedLink(app, seed, 0);
+    assert.equal((await getManage(app, token, { remoteAddress: '10.1.1.1' })).statusCode, 200);
+    assert.equal((await manageAvailability(app, token, { date: '2026-11-27' }, { remoteAddress: '10.1.1.1' })).statusCode, 200);
+    const limited = await getManage(app, token, { remoteAddress: '10.1.1.1' });
+    assertRateLimitedJson(limited);
+    assert.equal(limited.headers['referrer-policy'], 'no-referrer');
+    assert.equal(limited.headers['x-robots-tag'], 'noindex');
+    // a página pública e os horários do negócio não usam o teto do gerenciar
+    assert.equal((await getAvailability(app, seed.slug, availabilityQuery(seed), { remoteAddress: '10.1.1.1' })).statusCode, 200);
+    assert.equal((await getManage(app, token, { remoteAddress: '10.1.1.2' })).statusCode, 200);
+    assert.equal((await getManage(app, 'x'.repeat(43), { remoteAddress: '10.1.1.3' })).statusCode, 404);
+    assert.equal((await getManage(app, 'y'.repeat(43), { remoteAddress: '10.1.1.3' })).statusCode, 404);
+    assert.equal((await getManage(app, token, { remoteAddress: '10.1.1.3' })).statusCode, 429);
+  } finally {
+    await app.close();
+  }
+});
+
+test('publicBooking.perIp 3 compartilhado: reserva, cancel e reschedule esgotam o mesmo teto e a 4ª escrita (qualquer) dá 429', async () => {
+  for (const fourth of ['booking', 'cancel', 'reschedule']) {
+    const { app, seed } = await availabilityApp({ publicPage: { perIp: 100 }, publicBooking: { perIp: 3 } });
+    try {
+      const t1 = await bookedLink(app, seed, 0);
+      const t2 = await bookedLink(app, seed, 1);
+      assert.equal((await bookingRequest(app, seed, 2)).statusCode, 201);
+      const v1 = await versionOf(app, t1);
+      assert.equal((await cancelManage(app, t1, { version: v1, remoteAddress: '10.1.1.1' })).statusCode, 200);
+      const v2 = await versionOf(app, t2);
+      assert.equal((await rescheduleManage(app, t2, { start: '2026-11-27T16:00', version: v2 }, { remoteAddress: '10.1.1.1' })).statusCode, 200);
+      let res;
+      if (fourth === 'booking') res = await bookingRequest(app, seed, 3);
+      else if (fourth === 'cancel') res = await cancelManage(app, t2, { version: await versionOf(app, t2), remoteAddress: '10.1.1.1' });
+      else res = await rescheduleManage(app, t2, { start: '2026-11-27T17:00', version: await versionOf(app, t2) }, { remoteAddress: '10.1.1.1' });
+      assertRateLimitedJson(res);
+      // as leituras do gerenciar não usam o teto de escrita
+      assert.equal((await getManage(app, t2, { remoteAddress: '10.1.1.1' })).statusCode, 200);
+    } finally {
+      await app.close();
+    }
+  }
+});
+
+test('contador compartilhado publicPage.perIp 3: página, resumo e cancel esgotam; a 4ª (página do link) dá 429 HTML', async () => {
+  const { app, seed } = await availabilityApp({ publicPage: { perIp: 3 } });
+  try {
+    const token = await bookedLink(app, seed, 0);
+    assert.equal((await visit(app, `/${seed.slug}`)).statusCode, 200);
+    const version = (await getManage(app, token, { remoteAddress: '10.1.1.1' })).json().change.version;
+    assert.equal((await cancelManage(app, token, { version, remoteAddress: '10.1.1.1' })).statusCode, 200);
+    const page = await visit(app, `/agendamento/${token}`);
+    assertRateLimitedHtml(page);
+    assert.equal(page.headers['referrer-policy'], 'no-referrer');
+  } finally {
+    await app.close();
   }
 });

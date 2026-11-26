@@ -146,7 +146,7 @@ Critérios de aceite
 - Tela de sucesso com data, hora, serviço, profissional e endereço.
 
 ### AF-12 · Cancelar ou remarcar pelo cliente
-Tipo: História · Prioridade: Média · Pontos: 5 · Status: TODO
+Tipo: História · Prioridade: Média · Pontos: 5 · Status: DONE
 
 Como cliente final, quero cancelar ou remarcar usando o link recebido por e-mail.
 

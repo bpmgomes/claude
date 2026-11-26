@@ -1,6 +1,6 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { buildTestApp } from '../helpers/test-app.js';
 import { createClock } from '../helpers/clock.js';
 import {
@@ -86,6 +86,8 @@ function buildService(extra = {}) {
     appointments: s.appointments,
     customersService: s.customersService,
     availabilityService: s.availabilityService,
+    manageTokensRepository: s.manageTokensRepository,
+    publicBaseUrl: 'https://agendafacil.app',
     now: clock.now,
     ...extra,
   });
@@ -447,13 +449,14 @@ describe('idempotência (critério 25)', () => {
   afterEach(() => app.close());
   const KEY = '3b241101-e2bb-4255-8caf-4136c566a962';
 
-  test('mesma chave e mesmo corpo: o mesmo 201 (corpo idêntico) e COUNT = 1; e-mail com maiúsculas e espaços conta como o mesmo', async () => {
+  test('mesma chave e mesmo corpo: o mesmo appointment (byte a byte), outro link (AF-12) e COUNT = 1; e-mail com maiúsculas e espaços conta como o mesmo', async () => {
     const b = body({ professionalId: 'any' });
     const first = await book(b, { idempotencyKey: KEY });
     const again = await book(b, { idempotencyKey: KEY.toUpperCase() });
     const variant = await book({ ...b, customer: { ...b.customer, email: `  ${b.customer.email.toUpperCase()} `, phone: '11912345678' } }, { idempotencyKey: KEY });
-    assert.equal(JSON.stringify(again.body), JSON.stringify(first.body));
-    assert.equal(JSON.stringify(variant.body), JSON.stringify(first.body));
+    assert.equal(JSON.stringify(again.body.appointment), JSON.stringify(first.body.appointment));
+    assert.equal(JSON.stringify(variant.body.appointment), JSON.stringify(first.body.appointment));
+    assert.equal(new Set([first, again, variant].map((r) => r.body.manage.url)).size, 3);
     assert.equal(await countAppointments(app.db), 1);
     assert.equal(Number((await app.db.get('SELECT COUNT(*) AS n FROM booking_idempotency_keys')).n), 1);
     assert.equal((await app.db.get('SELECT idempotency_key FROM booking_idempotency_keys')).idempotency_key, KEY);
@@ -636,7 +639,7 @@ describe('eventos pós-commit (critério 44)', () => {
   afterEach(() => app.close());
   const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-  test('a porta recebe só { appointmentId, businessId }, depois do COMMIT (a linha já é visível)', async () => {
+  test('a porta recebe só { appointmentId, businessId, manageUrl }, depois do COMMIT (a linha já é visível)', async () => {
     const received = [];
     const service = buildService({
       appointmentEvents: {
@@ -650,7 +653,7 @@ describe('eventos pós-commit (critério 44)', () => {
     await tick();
     await tick();
     assert.equal(received.length, 1);
-    assert.deepEqual(Object.keys(received[0].event).sort(), ['appointmentId', 'businessId']);
+    assert.deepEqual(Object.keys(received[0].event).sort(), ['appointmentId', 'businessId', 'manageUrl']);
     assert.equal(received[0].event.businessId, businessId);
     assert.equal(received[0].row.status, 'confirmed');
   });
@@ -824,5 +827,147 @@ describe('logs (critério 38)', () => {
     const redacted = lines.find((l) => l.event === 'teste_redact');
     assert.equal(redacted.snapshot, '[REDACTED]');
     assert.equal(redacted.input, '[REDACTED]');
+  });
+});
+
+describe('AF-12: link de gerenciar na reserva (critérios 8, 9 e 27)', () => {
+  beforeEach(() => setup());
+  afterEach(() => app.close());
+  const KEY = '3b241101-e2bb-4255-8caf-4136c566a962';
+  const URL_RE = /^https:\/\/agendafacil\.app\/agendamento\/([A-Za-z0-9_-]{43})$/;
+  const tokenOf = (url) => URL_RE.exec(url)?.[1];
+  const sha = (t) => createHash('sha256').update(t).digest('hex');
+
+  test('201 com manage.url no formato, para cliente novo e antigo; token com hash e expires_at = ends_at; corpo guardado sem manage', async () => {
+    const customer = { email: 'carla@example.com', name: 'Carla Dias' };
+    const first = await book(body({ customer }), { idempotencyKey: KEY });
+    const second = await book(body({ customer, start: `${FRIDAY}T13:00` }));
+    for (const res of [first, second]) {
+      assert.match(res.body.manage.url, URL_RE);
+      assert.equal(res.body.manage.cancellationLeadMinutes, 120);
+      const token = tokenOf(res.body.manage.url);
+      const row = await app.db.get(
+        'SELECT t.*, a.ends_at FROM appointment_manage_tokens t JOIN appointments a ON a.id = t.appointment_id WHERE t.token_hash = ?',
+        [sha(token)],
+      );
+      assert.ok(row, 'linha do token pelo hash');
+      assert.equal(row.expires_at, row.ends_at);
+      assert.equal(row.revoked_at, null);
+    }
+    const stored = (await app.db.get('SELECT response_body FROM booking_idempotency_keys')).response_body;
+    assert.deepEqual(Object.keys(JSON.parse(stored)), ['appointment']);
+    assert.equal(stored.includes(tokenOf(first.body.manage.url)), false);
+    assert.equal(stored.includes('agendamento/'), false);
+  });
+
+  test('repetição depois de cancelar devolve um link que mostra cancelled; depois de ends_at dá manage: null', async () => {
+    const b0 = body();
+    const first = await book(b0, { idempotencyKey: KEY });
+    const manage = app.services.manageService;
+    const token = tokenOf(first.body.manage.url);
+    const version = (await manage.get(token)).body.change.version;
+    assert.equal((await manage.cancel(token, { version })).status, 200);
+    const replay = await book(b0, { idempotencyKey: KEY });
+    assert.notEqual(replay.body.manage.url, first.body.manage.url);
+    assert.equal((await manage.get(tokenOf(replay.body.manage.url))).body.appointment.status, 'cancelled');
+    assert.equal(JSON.stringify(replay.body.appointment), JSON.stringify(first.body.appointment));
+
+    // Hoje às 10:00 (1 h de antecedência): termina às 14:00Z, antes de a chave vencer.
+    const key2 = 'a3b0e8c4-6f2d-4f1a-9c3e-2b7d5e8f9a10';
+    const b = body({ start: '2026-11-26T10:00' });
+    assert.ok((await book(b, { idempotencyKey: key2 })).body.manage);
+    clock.advance(2 * 60 * 60 * 1000 + 1000);
+    const late = await book(b, { idempotencyKey: key2 });
+    assert.equal(late.status, 201);
+    assert.equal(late.body.manage, null);
+  });
+
+  test('QA D2: repetição depois de remarcar emite link do agendamento atual da cadeia; cadeia cancelada aponta para o último', async () => {
+    const b0 = body();
+    const first = await book(b0, { idempotencyKey: KEY });
+    const manage = app.services.manageService;
+    const original = tokenOf(first.body.manage.url);
+    const reschedule = async (start) => {
+      const version = (await manage.get(original)).body.change.version;
+      assert.equal((await manage.reschedule(original, { start, version })).status, 200);
+    };
+    await reschedule(`${FRIDAY}T14:00`);
+    const replay = await book(b0, { idempotencyKey: KEY });
+    const fresh = tokenOf(replay.body.manage.url);
+    const view = (await manage.get(fresh)).body;
+    assert.equal(view.appointment.start, `${FRIDAY}T14:00`);
+    assert.equal(view.appointment.status, 'confirmed');
+    assert.deepEqual((await manage.get(fresh)).body, (await manage.get(original)).body);
+    // O corpo da repetição continua o appointment original (contrato do AF-11).
+    assert.equal(JSON.stringify(replay.body.appointment), JSON.stringify(first.body.appointment));
+    // A linha do token novo aponta para o agendamento ativo, com o expires_at dele.
+    const row = await app.db.get(
+      'SELECT t.expires_at, a.ends_at, a.status FROM appointment_manage_tokens t JOIN appointments a ON a.id = t.appointment_id WHERE t.token_hash = ?',
+      [sha(fresh)],
+    );
+    assert.deepEqual({ ...row }, { expires_at: row.ends_at, ends_at: row.ends_at, status: 'confirmed' });
+
+    // Mais dois elos e o cancelamento no fim: a repetição aponta para o último, cancelado.
+    await reschedule(`${FRIDAY}T15:00`);
+    await reschedule(`${FRIDAY}T16:00`);
+    const version = (await manage.get(original)).body.change.version;
+    assert.equal((await manage.cancel(original, { version })).status, 200);
+    const late = await book(b0, { idempotencyKey: KEY });
+    const lateView = (await manage.get(tokenOf(late.body.manage.url))).body;
+    assert.equal(lateView.appointment.start, `${FRIDAY}T16:00`);
+    assert.equal(lateView.appointment.status, 'cancelled');
+  });
+
+  test('bookSlot com customerId e customerSnapshot grava o snapshot dado e não chama findOrCreate; os dois modos ou nenhum: TypeError', async () => {
+    const business = await app.db.get('SELECT id, timezone FROM businesses');
+    await book(body());
+    const { customer_id: customerId } = await app.db.get('SELECT customer_id FROM appointments');
+    let calls = 0;
+    const s = app.services;
+    const customersService = {
+      ...s.customersService,
+      async findOrCreate(...args) {
+        calls += 1;
+        return s.customersService.findOrCreate(...args);
+      },
+    };
+    const service = buildService({ customersService });
+    const base = { business, serviceId: corte.id, professionalId: pa.id, start: `${FRIDAY}T13:00`, nowMs: Date.parse(NOW) };
+    const booked = await app.db.transaction((tx) =>
+      service.bookSlot(tx, { ...base, customerId, customerSnapshot: { name: 'Nome Antigo', phone: '11987654321' } }),
+    );
+    assert.equal(calls, 0);
+    const row = await app.db.get('SELECT customer_id, customer_name, customer_phone FROM appointments WHERE id = ?', [booked.appointmentId]);
+    assert.deepEqual({ ...row }, { customer_id: customerId, customer_name: 'Nome Antigo', customer_phone: '11987654321' });
+
+    const total = await countAppointments(app.db);
+    const customerInput = body().customer;
+    for (const args of [
+      { ...base, start: `${FRIDAY}T14:00` },
+      { ...base, start: `${FRIDAY}T14:00`, customerInput, customerId, customerSnapshot: { name: 'x', phone: '11987654321' } },
+      { ...base, start: `${FRIDAY}T14:00`, customerId },
+      { ...base, start: `${FRIDAY}T14:00`, customerId, customerSnapshot: { name: 'x' } },
+    ]) {
+      await assert.rejects(app.db.transaction((tx) => service.bookSlot(tx, args)), TypeError);
+    }
+    assert.equal(await countAppointments(app.db), total);
+    assert.equal(calls, 0);
+  });
+
+  test('lockForBooking repetido na mesma tx é idempotente e devolve os mesmos elegíveis', async () => {
+    const business = await app.db.get('SELECT id, timezone FROM businesses');
+    const service = buildService();
+    const [first, second] = await app.db.transaction(async (tx) => [
+      await service.lockForBooking(tx, { business, serviceId: corte.id, professionalId: 'any' }),
+      await service.lockForBooking(tx, { business, serviceId: corte.id, professionalId: 'any' }),
+    ]);
+    assert.deepEqual(second.eligible.map((p) => p.id), first.eligible.map((p) => p.id));
+    assert.deepEqual(first.eligible.map((p) => p.id).sort(), [pa.id, pb.id].sort());
+    assert.deepEqual(second.service, first.service);
+    const one = await app.db.transaction(async (tx) => {
+      await service.lockForBooking(tx, { business, serviceId: corte.id, professionalId: pa.id });
+      return service.lockForBooking(tx, { business, serviceId: corte.id, professionalId: pa.id });
+    });
+    assert.deepEqual(one.eligible.map((p) => p.id), [pa.id]);
   });
 });

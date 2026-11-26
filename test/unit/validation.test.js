@@ -390,3 +390,29 @@ describe('hasVisibleContent e textKey (AF-07, critério 3)', () => {
     }
   });
 });
+
+describe('AF-12: antecedência de cancelamento (critérios 1 e 2)', async () => {
+  const v = await import('../../src/shared/validation.js');
+  const { validateCancellationLead, validateBusinessInput, hasBusinessFields, MESSAGES: MSG } = v;
+
+  test('0, 15, 120 e 4320 aceitos; fora do intervalo, não múltiplo e não inteiro com mensagens fixas', () => {
+    assert.equal(v.CANCELLATION_LEAD_DEFAULT_MINUTES, 120);
+    for (const ok of [0, 15, 120, 4320]) assert.equal(validateCancellationLead(ok), null, String(ok));
+    for (const out of [-15, 4335, 10_000, 4321]) assert.equal(validateCancellationLead(out), MSG.leadOutOfRange, String(out));
+    for (const bad of [10, 4310]) assert.equal(validateCancellationLead(bad), MSG.leadNotMultiple, String(bad));
+    for (const bad of ['120', null, 1.5, NaN, Infinity, true, undefined, {}]) {
+      assert.equal(validateCancellationLead(bad), MSG.leadNotInteger, String(bad));
+    }
+  });
+
+  test('validateBusinessInput parcial só com o prazo; erro junto com o de outro campo; hasBusinessFields', () => {
+    assert.deepEqual(validateBusinessInput({ cancellationLeadMinutes: 60 }, { partial: true }), { ok: true, value: { cancellationLeadMinutes: 60 } });
+    const both = validateBusinessInput({ cancellationLeadMinutes: '60', phone: 'x' }, { partial: true });
+    assert.deepEqual(Object.keys(both.fields).sort(), ['cancellationLeadMinutes', 'phone']);
+    assert.equal(both.fields.cancellationLeadMinutes, MSG.leadNotInteger);
+    assert.equal(validateBusinessInput({ cancellationLeadMinutes: undefined }, { partial: true }).ok, true);
+    assert.equal(hasBusinessFields({ cancellationLeadMinutes: 0 }), true);
+    const created = validateBusinessInput({ name: 'Salão', address: 'Rua A', phone: '(11) 91234-5678' });
+    assert.equal('cancellationLeadMinutes' in created.value, false);
+  });
+});

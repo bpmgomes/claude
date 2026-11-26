@@ -4,9 +4,13 @@
 import { formatDuration, formatServicePrice } from '../../shared/services.js';
 import { formatPhone } from '../../shared/validation.js';
 
-/** Árvore de chaves da resposta (o teste compara recursivamente). */
+/**
+ * Árvore de chaves da resposta (o teste compara recursivamente). `manage` (AF-12, critério 8) é
+ * acrescentado pelo serviço na resposta; o corpo guardado na idempotência é só `{ appointment }`.
+ */
 export const PUBLIC_APPOINTMENT_FIELDS = Object.freeze({
-  root: Object.freeze(['appointment']),
+  root: Object.freeze(['appointment', 'manage']),
+  manage: Object.freeze(['url', 'cancellationLeadMinutes', 'policy']),
   appointment: Object.freeze(['start', 'end', 'weekday', 'timezone', 'service', 'professional', 'business']),
   service: Object.freeze(['name', 'durationMinutes', 'durationLabel', 'priceCents', 'priceOnRequest', 'priceLabel']),
   professional: Object.freeze(['name']),
@@ -20,7 +24,7 @@ export const PUBLIC_APPOINTMENT_FIELDS = Object.freeze({
  *   business: { name: string, address: string, phone: string },
  *   timezone: string,
  * }} input
- * @returns {{ appointment: object }}
+ * @returns {{ appointment: object }} o corpo guardado em `booking_idempotency_keys` (sem `manage`)
  */
 export function toPublicAppointment({ booked, business, timezone }) {
   const priceOnRequest = Boolean(booked.service.priceOnRequest) || booked.service.priceCents === null;

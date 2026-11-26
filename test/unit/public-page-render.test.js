@@ -256,6 +256,27 @@ describe('ação de agendar e estado vazio (critérios 7, 8 e 15)', () => {
     assert.ok(confirmAt < html.indexOf('class="pp-alert"') && html.indexOf('class="pp-alert"') < html.indexOf('<form'));
   });
 
+  test('bloco "Gerenciar agendamento" oculto e sem href; aviso de guardar e não compartilhar; o telefone continua (AF-12, critério 8, substitui o critério 28 do AF-11)', () => {
+    const html = renderPublicPage(page());
+    const [block] = tagsOf(html, 'div').filter((d) => d.class === 'pp-success-manage');
+    assert.ok(block);
+    assert.equal('hidden' in block, true);
+    const [link] = tagsOf(html, 'a').filter((a) => a.class === 'pp-success-manage-link');
+    assert.equal('href' in link, false, 'sem href no HTML');
+    assert.equal(link.rel, 'noreferrer');
+    const start = html.indexOf('<div class="pp-success-manage"');
+    const blockText = textOf(html.slice(start, html.indexOf('</div>', start)));
+    assert.ok(blockText.includes('Gerenciar agendamento (cancelar ou remarcar)'));
+    assert.ok(blockText.includes('Guarde este link'));
+    assert.ok(blockText.includes('Não compartilhe'));
+    assert.ok(tagsOf(html, 'p').some((p) => p.class === 'pp-success-policy'));
+    const phoneAt = html.indexOf('class="pp-success-phone"');
+    assert.ok(start < phoneAt, 'o bloco vem antes do telefone');
+    assert.ok(textOf(html.slice(phoneAt - 10, html.indexOf('</p>', phoneAt))).includes('Se preferir, ligue para'));
+    const section = html.slice(html.indexOf('<section class="pp-success"'), html.indexOf('</section>', html.indexOf('<section class="pp-success"')));
+    assert.doesNotMatch(section, /\sstyle=|\son[a-z]+=/);
+  });
+
   test('estado vazio: texto explicativo e link tel:', () => {
     const html = renderPublicPage(page({ hasOffer: false }));
     const text = textOf(html);

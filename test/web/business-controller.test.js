@@ -11,6 +11,7 @@ const {
   suggestSlugFromName,
   safeLogoUrl,
   safePublicUrl,
+  toLeadMinutes,
 } = await import('../../web/js/business-controller.js');
 const { GENERIC_ERROR_MESSAGE, requestBinary } = await import('../../web/js/api.js');
 
@@ -192,5 +193,43 @@ describe('outros', () => {
     });
     assert.equal(res.status, 0);
     assert.equal(res.error.code, 'NETWORK_ERROR');
+  });
+});
+
+describe('AF-12: prazo de cancelamento e remarcação (critério 2)', () => {
+  test('update envia cancellationLeadMinutes como número', async () => {
+    const fetchFn = fakeFetch(200, { business: { ...BUSINESS, cancellationLeadMinutes: 60 } });
+    const result = await submitBusiness({ cancellationLeadMinutes: '60' }, { mode: 'update', fetchFn });
+    assert.equal(result.ok, true);
+    assert.equal(result.business.cancellationLeadMinutes, 60);
+    assert.deepEqual(JSON.parse(fetchFn.calls[0].init.body), { cancellationLeadMinutes: 60 });
+    const zero = fakeFetch(200, { business: BUSINESS });
+    await submitBusiness({ cancellationLeadMinutes: '0' }, { mode: 'update', fetchFn: zero });
+    assert.deepEqual(JSON.parse(zero.calls[0].init.body), { cancellationLeadMinutes: 0 });
+  });
+
+  test("'abc', '10', '5000' e '' dão erro local de campo sem chamar fetch", async () => {
+    for (const raw of ['abc', '10', '5000', '', '1.5']) {
+      const fetchFn = fakeFetch(200, { business: BUSINESS });
+      const result = await submitBusiness({ cancellationLeadMinutes: raw }, { mode: 'update', fetchFn });
+      assert.equal(result.ok, false, raw);
+      assert.ok(result.fields.cancellationLeadMinutes, raw);
+      assert.equal(fetchFn.calls.length, 0, raw);
+    }
+  });
+
+  test('o 400 do servidor com fields.cancellationLeadMinutes é repassado', async () => {
+    const message = 'Use múltiplos de 15 minutos (ex.: 15, 30, 60, 120).';
+    const fetchFn = fakeFetch(400, { error: { code: 'VALIDATION_ERROR', message: 'Confira os campos.', fields: { cancellationLeadMinutes: message } } });
+    const result = await submitBusiness({ cancellationLeadMinutes: '60' }, { mode: 'update', fetchFn });
+    assert.deepEqual(result.fields, { cancellationLeadMinutes: message });
+    assert.equal(result.status, 400);
+  });
+
+  test('toLeadMinutes: só dígitos (até 4) viram número; o resto passa como está', () => {
+    assert.equal(toLeadMinutes('120'), 120);
+    assert.equal(toLeadMinutes('0'), 0);
+    assert.equal(toLeadMinutes(90), 90);
+    for (const raw of ['abc', '', '12345', '-15', '1.5', ' 60']) assert.equal(toLeadMinutes(raw), raw);
   });
 });

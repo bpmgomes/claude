@@ -6,8 +6,17 @@ export const LOGO_TYPES = Object.freeze(['image/png', 'image/jpeg']);
 export const LOGO_TOO_LARGE_MESSAGE = 'O logo deve ter no máximo 2 MB.';
 export const LOGO_INVALID_MESSAGE = 'Envie uma imagem PNG ou JPG válida.';
 const CHECK_FIELDS_MESSAGE = 'Verifique os campos destacados.';
-const FIELDS = ['name', 'address', 'phone', 'slug'];
+const FIELDS = ['name', 'address', 'phone', 'slug', 'cancellationLeadMinutes'];
 const LOGO_PATH_RE = /^\/media\/logos\/[0-9a-f-]{36}\.png$/;
+
+/**
+ * Valor do campo de antecedência (AF-12): `/^\d{1,4}$/` vira número; outra entrada passa como está,
+ * para cair em `leadNotInteger` na validação local (a mesma do servidor).
+ */
+export function toLeadMinutes(raw) {
+  if (typeof raw === 'string' && /^\d{1,4}$/.test(raw)) return Number(raw);
+  return raw;
+}
 
 /** Slug sugerido a partir do nome, para pré-preencher o campo. */
 export function suggestSlugFromName(name) {
@@ -45,13 +54,16 @@ function failure(res) {
 
 /**
  * Cria (POST) ou edita (PATCH) o negócio. Valida antes; o servidor é a autoridade.
- * @param {{ name?: string, address?: string, phone?: string, slug?: string }} values
+ * @param {{ name?: string, address?: string, phone?: string, slug?: string,
+ *   cancellationLeadMinutes?: string|number }} input  o prazo (AF-12) vai como número
  * @param {{ mode: 'create'|'update', fetchFn: typeof fetch }} deps
  * @returns {Promise<{ ok: true, business: object, redirectTo?: string }
  *   | { ok: false, status?: number, fields: Record<string,string>, message: string, suggestion?: string }>}
  */
-export async function submitBusiness(values, { mode = 'create', fetchFn }) {
+export async function submitBusiness(input, { mode = 'create', fetchFn }) {
   const partial = mode === 'update';
+  const values = { ...input };
+  if (values.cancellationLeadMinutes !== undefined) values.cancellationLeadMinutes = toLeadMinutes(values.cancellationLeadMinutes);
   const check = validateBusinessInput(values, { partial });
   const fields = check.ok ? {} : { ...check.fields };
   const slugGiven = values.slug !== undefined && values.slug !== null && values.slug !== '';

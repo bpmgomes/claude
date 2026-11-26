@@ -12,10 +12,12 @@ export class BusyUnavailableError extends Error {
 const toMsIntervals = (list) =>
   (Array.isArray(list) ? list : []).map((i) => ({ startMs: Date.parse(i.startsAt), endMs: Date.parse(i.endsAt) }));
 
-async function readBusy(appointments, businessId, professionalId, fromIso, toIso, conn) {
+async function readBusy(appointments, businessId, professionalId, fromIso, toIso, conn, excludeAppointmentId) {
+  // Sem o filtro do AF-12, a porta recebe exatamente `{ professionalId }`, como antes.
+  const filter = excludeAppointmentId ? { professionalId, excludeAppointmentId } : { professionalId };
   let busy;
   try {
-    busy = await appointments.findBusyByBusiness(businessId, { professionalId }, fromIso, toIso, conn);
+    busy = await appointments.findBusyByBusiness(businessId, filter, fromIso, toIso, conn);
   } catch (err) {
     throw new BusyUnavailableError({ cause: err });
   }
@@ -39,6 +41,7 @@ async function readBusy(appointments, businessId, professionalId, fromIso, toIso
  * @param {string} fromIso
  * @param {string} toIso
  * @param {import('../../db/index.js').Database} [conn]
+ * @param {{ excludeAppointmentId?: string|null }} [options] AF-12: agendamento que não ocupa (remarcar)
  * @returns {Promise<import('./availability-engine.js').EngineProfessional[]>}
  * @throws {BusyUnavailableError} se findBusyByBusiness falhar ou não devolver um Map (com `cause`)
  */
@@ -50,17 +53,18 @@ export async function readLayers(
   fromIso,
   toIso,
   conn,
+  { excludeAppointmentId = null } = {},
 ) {
   if (eligible.length === 0) return [];
   if (specificId) {
     const weekly = await workingHoursRepository.findByProfessional(businessId, specificId, conn);
     const blocks = await timeBlocksRepository.findApplicable(businessId, specificId, fromIso, toIso, conn);
-    const busy = await readBusy(appointments, businessId, specificId, fromIso, toIso, conn);
+    const busy = await readBusy(appointments, businessId, specificId, fromIso, toIso, conn, excludeAppointmentId);
     return [{ id: specificId, weekly, blocks: toMsIntervals(blocks), appointments: toMsIntervals(busy.get(specificId)) }];
   }
   const weeklyById = await workingHoursRepository.findWeeklyByBusiness(businessId, conn);
   const blocks = await timeBlocksRepository.findApplicableByBusiness(businessId, fromIso, toIso, conn);
-  const busy = await readBusy(appointments, businessId, null, fromIso, toIso, conn);
+  const busy = await readBusy(appointments, businessId, null, fromIso, toIso, conn, excludeAppointmentId);
   // Os bloqueios de "todos" valem para todo ativo, inclusive criado depois (AF-16, critério 9).
   const forAll = toMsIntervals(blocks.all);
   return eligible.map((p) => ({

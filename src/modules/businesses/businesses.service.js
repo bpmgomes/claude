@@ -143,6 +143,7 @@ export function createBusinessesService({
               phone: value.phone,
               timezone: DEFAULT_TIMEZONE,
               createdAt,
+              cancellationLeadMinutes: value.cancellationLeadMinutes,
             },
             tx,
           );
@@ -167,7 +168,7 @@ export function createBusinessesService({
     },
 
     /**
-     * Edição parcial (nome, endereço, telefone, slug).
+     * Edição parcial (nome, endereço, telefone, slug e, desde o AF-12, a antecedência de cancelamento).
      * @throws {ValidationError|NotFoundError|SlugTakenError}
      */
     async update(ownerId, input) {

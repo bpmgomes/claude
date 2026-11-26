@@ -493,3 +493,63 @@ describe('páginas', () => {
     }
   });
 });
+
+describe('AF-12: prazo de cancelamento e remarcação (critérios 1 e 2)', () => {
+  const LEAD = {
+    notInteger: 'Informe o prazo em minutos, com um número inteiro.',
+    outOfRange: 'Escolha um prazo entre 0 e 4320 minutos (72 h).',
+    notMultiple: 'Use múltiplos de 15 minutos (ex.: 15, 30, 60, 120).',
+  };
+
+  test('POST sem a chave dá 120; GET traz 120; PATCH 60 dá 200 com 60; PATCH 0 aceito', async () => {
+    const created = await create(ana);
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().business.cancellationLeadMinutes, 120);
+    assert.equal((await get(ana)).json().business.cancellationLeadMinutes, 120);
+    const res = await patch(ana, { cancellationLeadMinutes: 60 });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json().business.cancellationLeadMinutes, 60);
+    assert.equal((await get(ana)).json().business.cancellationLeadMinutes, 60);
+    assert.equal((await patch(ana, { cancellationLeadMinutes: 0 })).json().business.cancellationLeadMinutes, 0);
+    // PATCH de outro campo não mexe no prazo.
+    assert.equal((await patch(ana, { name: 'Salão Novo' })).json().business.cancellationLeadMinutes, 0);
+  });
+
+  test('POST com a chave grava o valor dado', async () => {
+    const created = await create(ana, { ...VALID, cancellationLeadMinutes: 1440 });
+    assert.equal(created.statusCode, 201, created.body);
+    assert.equal(created.json().business.cancellationLeadMinutes, 1440);
+  });
+
+  test('erros por campo, junto com phone inválido no mesmo corpo, sem eco; nada gravado', async () => {
+    await create(ana);
+    for (const [value, message] of [
+      ['120', LEAD.notInteger],
+      [null, LEAD.notInteger],
+      [1.5, LEAD.notInteger],
+      [true, LEAD.notInteger],
+      [-15, LEAD.outOfRange],
+      [4335, LEAD.outOfRange],
+      [10_000, LEAD.outOfRange],
+      [10, LEAD.notMultiple],
+    ]) {
+      const res = await patch(ana, { cancellationLeadMinutes: value, phone: '123<b>' });
+      assert.equal(res.statusCode, 400, JSON.stringify(value));
+      const { fields } = res.json().error;
+      assert.equal(fields.cancellationLeadMinutes, message, JSON.stringify(value));
+      assert.ok(fields.phone);
+      assert.equal(res.body.includes('123<b>'), false, 'sem eco da entrada');
+      assert.deepEqual(Object.keys(res.json().error).sort(), ['code', 'fields', 'message']);
+    }
+    assert.equal((await get(ana)).json().business.cancellationLeadMinutes, 120);
+  });
+
+  test('o dono B não altera o prazo de A (escopo da sessão)', async () => {
+    await create(ana);
+    const bia = await signupAndLogin(app, { email: 'bia@x.com' });
+    await create(bia, { ...VALID, name: 'Barbearia da Bia' });
+    assert.equal((await patch(bia, { cancellationLeadMinutes: 4320 })).statusCode, 200);
+    assert.equal((await get(ana)).json().business.cancellationLeadMinutes, 120);
+    assert.equal((await get(bia)).json().business.cancellationLeadMinutes, 4320);
+  });
+});

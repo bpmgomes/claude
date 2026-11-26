@@ -87,8 +87,8 @@ function matchesEtag(header, etag) {
   });
 }
 
-/** errorHandler das rotas públicas: nunca JSON e nunca eco. */
-function publicErrorHandler(error, request, reply) {
+/** errorHandler das rotas públicas: nunca JSON e nunca eco. Também usado pela página do AF-12. */
+export function publicErrorHandler(error, request, reply) {
   if (error && error.statusCode === 429) return sendRateLimitedPage(reply);
   if (error instanceof NotFoundError) return sendNotFoundPage(reply);
   request.log.error({ event: 'public_page_error', err: error });

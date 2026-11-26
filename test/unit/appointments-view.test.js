@@ -16,9 +16,15 @@ const booked = (service) => ({
   customerName: 'Cliente',
 });
 
-/** Confere recursivamente a árvore de chaves contra PUBLIC_APPOINTMENT_FIELDS. */
+/**
+ * Confere recursivamente a árvore de chaves contra PUBLIC_APPOINTMENT_FIELDS. Desde o AF-12, a raiz do
+ * 201 é `appointment` e `manage`, mas `toPublicAppointment` devolve só `{ appointment }` (o corpo
+ * guardado na idempotência, sem token; o serviço acrescenta `manage`).
+ */
 function assertTree(body) {
-  assert.deepEqual(Object.keys(body), PUBLIC_APPOINTMENT_FIELDS.root);
+  assert.deepEqual(PUBLIC_APPOINTMENT_FIELDS.root, ['appointment', 'manage']);
+  assert.deepEqual(PUBLIC_APPOINTMENT_FIELDS.manage, ['url', 'cancellationLeadMinutes', 'policy']);
+  assert.deepEqual(Object.keys(body), ['appointment']);
   const { appointment } = body;
   assert.deepEqual(Object.keys(appointment), PUBLIC_APPOINTMENT_FIELDS.appointment);
   for (const key of ['service', 'professional', 'business']) {

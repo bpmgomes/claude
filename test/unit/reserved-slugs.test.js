@@ -26,3 +26,7 @@ test('prefixos do app (shared, media, api) e páginas registradas estão em RESE
   const missing = ['shared', 'media', 'api', ...pages].filter((n) => !RESERVED_SLUGS.has(n));
   assert.deepEqual(missing, []);
 });
+
+test('AF-12: agendamento (página de gerenciar) e manage (prefixo da API) são reservados', () => {
+  for (const slug of ['agendamento', 'manage']) assert.ok(RESERVED_SLUGS.has(slug), slug);
+});

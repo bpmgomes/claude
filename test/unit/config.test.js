@@ -218,3 +218,8 @@ describe('AF-11: publicBooking, CONFLICTS_TOKEN_SECRET e appointmentEvents', () 
     }
   });
 });
+
+test('AF-12: padrão de rateLimit.publicManage: 30 por minuto por IP; publicBooking continua 10', () => {
+  assert.deepEqual(loadConfig({}).rateLimit.publicManage, { perIp: 30 });
+  assert.deepEqual(loadConfig({}).rateLimit.publicBooking, { perIp: 10 });
+});

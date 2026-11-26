@@ -4,15 +4,22 @@ import {
   removeLogo,
   loadBusiness,
   safePublicUrl,
+  toLeadMinutes,
 } from './business-controller.js';
 import {
   browserFetch,
+  FIELDS,
   readValues,
   clearErrors,
   showErrors,
   setupSlugField,
   renderLogo,
 } from './business-form.js';
+import { formatDuration } from '/shared/services.js';
+import { validateCancellationLead } from '/shared/validation.js';
+
+/** Campos da edição: os do onboarding mais a antecedência do AF-12 (critério 2). */
+const EDIT_FIELDS = [...FIELDS, 'cancellationLeadMinutes'];
 
 const navigate = (url) => window.location.assign(url);
 
@@ -29,6 +36,17 @@ const logoError = document.getElementById('logo-error');
 const logoStatus = document.getElementById('logo-status');
 const logoPreview = document.getElementById('logo-preview');
 const removeButton = document.getElementById('remove-logo');
+const leadInput = document.getElementById('cancellationLeadMinutes');
+const leadEquivalent = document.getElementById('cancellationLeadMinutes-equivalent');
+
+/** "Equivale a 2 h" quando o valor é válido (formatDuration); senão, vazio. */
+function updateLeadEquivalent() {
+  const minutes = toLeadMinutes(leadInput.value);
+  const valid = validateCancellationLead(minutes) === null;
+  const text = valid ? (minutes === 0 ? 'Até o horário de início' : `Equivale a ${formatDuration(minutes)}`) : '';
+  if (leadEquivalent.textContent !== text) leadEquivalent.textContent = text;
+}
+leadInput.addEventListener('input', updateLeadEquivalent);
 
 const slugField = setupSlugField(form, {
   status: document.getElementById('slug-status'),
@@ -41,6 +59,8 @@ function render(business) {
   form.elements.address.value = business.address;
   form.elements.phone.value = business.phone;
   form.elements.slug.value = business.slug;
+  if (Number.isInteger(business.cancellationLeadMinutes)) leadInput.value = String(business.cancellationLeadMinutes);
+  updateLeadEquivalent();
   const href = safePublicUrl(business.publicUrl);
   publicLink.textContent = business.publicUrl || '';
   if (href) {
@@ -64,19 +84,20 @@ function handleAuth(status) {
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  clearErrors(form, formError);
+  clearErrors(form, formError, EDIT_FIELDS);
   saveStatus.textContent = '';
   slugField.showSuggestion(null);
   submitButton.disabled = true;
   try {
-    const result = await submitBusiness(readValues(form), { mode: 'update', fetchFn: browserFetch });
+    const values = { ...readValues(form), cancellationLeadMinutes: leadInput.value };
+    const result = await submitBusiness(values, { mode: 'update', fetchFn: browserFetch });
     if (result.ok) {
       render(result.business);
       saveStatus.textContent = 'Dados salvos.';
       return;
     }
     if (handleAuth(result.status)) return;
-    showErrors(form, formError, result.fields, result.message);
+    showErrors(form, formError, result.fields, result.message, EDIT_FIELDS);
     if (result.suggestion) slugField.showSuggestion(result.suggestion);
   } finally {
     submitButton.disabled = false;

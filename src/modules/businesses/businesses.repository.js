@@ -1,14 +1,26 @@
+import { CANCELLATION_LEAD_DEFAULT_MINUTES } from '../../shared/validation.js';
+
 /**
  * @typedef {{ id: string, ownerId: string, name: string, slug: string, address: string, phone: string,
- *   timezone: string, logoKey: string|null, createdAt: string, updatedAt: string }} Business
+ *   timezone: string, logoKey: string|null, cancellationLeadMinutes: number, createdAt: string,
+ *   updatedAt: string }} Business
  * @typedef {{ id: string, name: string, slug: string, address: string, phone: string, timezone: string,
- *   logoUrl: string|null, publicUrl: string, createdAt: string, updatedAt: string }} OwnerBusiness
+ *   logoUrl: string|null, publicUrl: string, cancellationLeadMinutes: number, createdAt: string,
+ *   updatedAt: string }} OwnerBusiness
  */
 
-const COLUMNS = 'id, owner_id, name, slug, address, phone, timezone, logo_key, created_at, updated_at';
+const INSERT_COLUMNS = 'id, owner_id, name, slug, address, phone, timezone, logo_key, created_at, updated_at';
+/** Leitura: as do insert mais a antecedência do AF-12 (migração 012, DEFAULT 120). */
+const COLUMNS = `${INSERT_COLUMNS}, cancellation_lead_minutes`;
 
 /** Colunas que `update` pode alterar. Nunca vêm do cliente. */
-const UPDATABLE = Object.freeze({ name: 'name', address: 'address', phone: 'phone', slug: 'slug' });
+const UPDATABLE = Object.freeze({
+  name: 'name',
+  address: 'address',
+  phone: 'phone',
+  slug: 'slug',
+  cancellationLeadMinutes: 'cancellation_lead_minutes',
+});
 
 function fromRow(row) {
   if (!row) return undefined;
@@ -21,6 +33,7 @@ function fromRow(row) {
     phone: row.phone,
     timezone: row.timezone,
     logoKey: row.logo_key ?? null,
+    cancellationLeadMinutes: Number(row.cancellation_lead_minutes),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -48,6 +61,7 @@ export function toOwnerBusiness(business, { publicBaseUrl }) {
     timezone: business.timezone,
     logoUrl: logoUrlOf(business.logoKey),
     publicUrl: `${publicBaseUrl}/${business.slug}`,
+    cancellationLeadMinutes: business.cancellationLeadMinutes,
     createdAt: business.createdAt,
     updatedAt: business.updatedAt,
   };
@@ -60,12 +74,36 @@ export function createBusinessesRepository(db) {
      * @returns {Promise<Business>}
      * @throws {import('../../db/errors.js').UniqueViolationError}
      */
-    async insert({ id, ownerId, name, slug, address, phone, timezone, createdAt }, conn = db) {
+    async insert({ id, ownerId, name, slug, address, phone, timezone, createdAt, cancellationLeadMinutes }, conn = db) {
+      // Sem a antecedência, vale o DEFAULT 120 do banco (AF-12, critério 1).
+      const withLead = cancellationLeadMinutes !== undefined;
       await conn.run(
-        `INSERT INTO businesses (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
-        [id, ownerId, name, slug, address, phone, timezone, createdAt, createdAt],
+        withLead
+          ? `INSERT INTO businesses (${INSERT_COLUMNS}, cancellation_lead_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`
+          : `INSERT INTO businesses (${INSERT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+        [id, ownerId, name, slug, address, phone, timezone, createdAt, createdAt, ...(withLead ? [cancellationLeadMinutes] : [])],
       );
-      return { id, ownerId, name, slug, address, phone, timezone, logoKey: null, createdAt, updatedAt: createdAt };
+      return {
+        id,
+        ownerId,
+        name,
+        slug,
+        address,
+        phone,
+        timezone,
+        logoKey: null,
+        cancellationLeadMinutes: withLead ? cancellationLeadMinutes : CANCELLATION_LEAD_DEFAULT_MINUTES,
+        createdAt,
+        updatedAt: createdAt,
+      };
+    },
+
+    /**
+     * Por id (AF-12: o token determina o negócio; nunca vem do cliente).
+     * @returns {Promise<Business|undefined>}
+     */
+    async findById(id, conn = db) {
+      return fromRow(await conn.get(`SELECT ${COLUMNS} FROM businesses WHERE id = ?`, [id]));
     },
 
     /**
@@ -86,7 +124,8 @@ export function createBusinessesRepository(db) {
      * Atualiza só as colunas da lista fixa presentes em `patch`, filtrando por id e dono.
      * @param {string} id
      * @param {string} ownerId
-     * @param {{ name?: string, address?: string, phone?: string, slug?: string, updatedAt: string }} patch
+     * @param {{ name?: string, address?: string, phone?: string, slug?: string,
+     *   cancellationLeadMinutes?: number, updatedAt: string }} patch
      * @returns {Promise<{ changes: number }>}
      * @throws {import('../../db/errors.js').UniqueViolationError}
      */

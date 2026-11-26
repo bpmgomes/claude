@@ -161,13 +161,17 @@ describe('concorrência no mesmo processo (critérios 19 a 23 e 25)', () => {
     }
   });
 
-  test('a mesma Idempotency-Key 5 vezes ao mesmo tempo: 5 × 201 idênticos e 1 agendamento (critério 25)', async () => {
+  test('a mesma Idempotency-Key 5 vezes ao mesmo tempo: 5 × 201 com o mesmo appointment, 5 links distintos e 1 agendamento (critério 25; AF-12 critério 8)', async () => {
     const b = bookingBody({ serviceId: corte.id, professionalId: 'any', start: `${FRIDAY}T10:00`, customer: customerOf(9999) });
     const headers = { 'idempotency-key': '3b241101-e2bb-4255-8caf-4136c566a962' };
     const responses = await Promise.all(Array.from({ length: 5 }, () => postAppointment(app, SLUG, b, { headers })));
     assert.deepEqual(statusesOf(responses), Array(5).fill(201));
-    assert.equal(new Set(responses.map((r) => r.body)).size, 1);
+    assert.equal(new Set(responses.map((r) => JSON.stringify(r.json().appointment))).size, 1);
+    const urls = responses.map((r) => r.json().manage.url);
+    assert.equal(new Set(urls).size, 5);
+    for (const url of urls) assert.match(url, /^https:\/\/agendafacil\.app\/agendamento\/[A-Za-z0-9_-]{43}$/);
     assert.equal(await countAppointments(app.db), 1);
+    assert.equal(Number((await app.db.get('SELECT COUNT(*) AS n FROM appointment_manage_tokens')).n), 5);
   });
 });
 

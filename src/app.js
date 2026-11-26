@@ -54,6 +54,11 @@ import { createAppointmentsPort } from './modules/appointments/appointments-port
 import { createAppointmentsService } from './modules/appointments/appointments.service.js';
 import { noAppointmentEvents } from './modules/appointments/appointment-events-port.js';
 import appointmentsRoutes from './modules/appointments/appointments.routes.js';
+import { createManageTokensRepository } from './modules/appointments/manage-tokens.repository.js';
+import { createReschedulesRepository } from './modules/appointments/reschedules.repository.js';
+import { createManageService } from './modules/appointments/manage.service.js';
+import manageRoutes from './modules/appointments/manage.routes.js';
+import { redactLogUrl } from './http/log-redact.js';
 import { createImageLimiter } from './images/image-limiter.js';
 import { createStorage } from './storage/index.js';
 
@@ -102,7 +107,24 @@ export const REDACT_PATHS = [
   // Consequência: logs não usam `name` para identificar erros (usam `errCode`/`errName`).
   ...['snapshot', 'input', 'name', 'phone', 'email', 'customer_name', 'customer_phone', 'customerName', 'customerPhone']
     .flatMap((key) => [key, `*.${key}`, `*.*.${key}`, `*.*.*.${key}`]),
+  // AF-12 (critério 10): token de gerenciar, o hash e o link (payload dos eventos) em até 4 níveis. A
+  // URL do pedido sai pelo serializador `req` (redactLogUrl).
+  ...['token', 'tokenHash', 'token_hash', 'manageUrl'].flatMap((key) => [key, `*.${key}`, `*.*.${key}`, `*.*.*.${key}`]),
 ];
+
+/**
+ * Serializador `req` do log: a forma do padrão do Fastify (`method`, `url`, `host`, `remoteAddress`,
+ * `remotePort`), com a URL sem query e sem o token de gerenciar (AF-12, critério 10; R13).
+ */
+export function serializeRequestForLog(req) {
+  return {
+    method: req.method,
+    url: redactLogUrl(req.url),
+    host: req.host,
+    remoteAddress: req.ip,
+    remotePort: req.socket ? req.socket.remotePort : undefined,
+  };
+}
 
 /** Páginas HTML servidas pelo app. Todo caminho aqui precisa estar em RESERVED_SLUGS (teste). */
 export const PAGES = Object.freeze({
@@ -117,6 +139,7 @@ export const PAGES = Object.freeze({
 });
 
 /**
+ * O boot também purga os tokens de gerenciar vencidos há mais de 30 dias (AF-12, critério 7).
  * @param {object} [overrides] sobrescreve chaves de loadConfig(); aceita também `logStream`,
  *   `now` (relógio `() => Date`, padrão `() => new Date()`, repassado a todos os serviços)
  *   `storage` (instância de `Storage`; padrão: disco local em `config.uploadsDir`) e
@@ -139,6 +162,7 @@ export async function buildApp(overrides = {}) {
   const logger = {
     level: config.logLevel,
     redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
+    serializers: { req: serializeRequestForLog },
   };
   if (overrides.logStream) logger.stream = overrides.logStream;
 
@@ -278,6 +302,8 @@ export async function buildApp(overrides = {}) {
   // Porta customers (AF-04): sem rota própria; só o AF-11 (e o AF-15) chama, com a transação dele.
   const customersRepository = createCustomersRepository(db);
   const customersService = createCustomersService({ customersRepository, now });
+  const manageTokensRepository = createManageTokensRepository(db);
+  const reschedulesRepository = createReschedulesRepository(db);
   // Reserva pública (AF-11). Eventos pós-commit pela porta injetável (nula por padrão).
   const appointmentsService = createAppointmentsService({
     db,
@@ -291,11 +317,32 @@ export async function buildApp(overrides = {}) {
     customersService,
     availabilityService,
     appointmentEvents: overrides.appointmentEvents ?? noAppointmentEvents,
+    manageTokensRepository,
+    reschedulesRepository,
+    publicBaseUrl: config.publicBaseUrl,
     now,
     log: app.log,
   });
   // Idempotency-Key expiradas (24 h) saem no boot; uma falha não impede a subida.
   await appointmentsService.purgeExpiredIdempotencyKeys();
+  // Gerenciar pelo link (AF-12): cancelar e remarcar, com a mesma porta de eventos.
+  const manageService = createManageService({
+    db,
+    businessesRepository,
+    servicesRepository,
+    professionalsRepository,
+    appointmentsRepository,
+    manageTokensRepository,
+    reschedulesRepository,
+    appointmentsService,
+    availabilityService,
+    appointmentEvents: overrides.appointmentEvents ?? noAppointmentEvents,
+    config,
+    now,
+    log: app.log,
+  });
+  // Tokens vencidos há mais de 30 dias saem no boot; uma falha não impede a subida.
+  await manageService.purgeExpiredTokens();
   const authService = createAuthService({
     db,
     usersRepository,
@@ -332,6 +379,9 @@ export async function buildApp(overrides = {}) {
     appointmentsRepository,
     appointments,
     appointmentsService,
+    manageTokensRepository,
+    reschedulesRepository,
+    manageService,
     imageLimiter,
   });
 
@@ -373,6 +423,9 @@ export async function buildApp(overrides = {}) {
   // critério 25): `/:slug`, `/:slug/`, o 404 HTML de fallback e o endpoint de horários. null sem rate limit.
   publicReadLimiter = createSharedPublicLimiter(app, config, 'publicPage');
   app.decorate('publicReadLimiter', publicReadLimiter);
+  // Teto de escrita pública ÚNICO (AF-12, critério 33): reservar (AF-11), cancelar e remarcar dividem
+  // o mesmo contador `publicBooking`, sem multiplicar o limite entre rotas. null sem rate limit.
+  app.decorate('publicWriteLimiter', createSharedPublicLimiter(app, config, 'publicBooking', { addHeaders: false }));
   // Contador barato por IP para o JSON 400 de URL malformada (AF-09 item 1).
   malformedUrlLimiter = createSharedPublicLimiter(app, config, 'malformedUrl');
 
@@ -429,6 +482,7 @@ export async function buildApp(overrides = {}) {
   // Antes de publicPageRoutes (rota estática /api/public/... tem prioridade sobre `/:slug`).
   await app.register(availabilityRoutes);
   await app.register(appointmentsRoutes);
+  await app.register(manageRoutes);
   // Por último: `/:slug` só casa o que nenhuma rota estática casou.
   await app.register(publicPageRoutes);
 
