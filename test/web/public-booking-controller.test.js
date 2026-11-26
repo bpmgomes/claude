@@ -1,7 +1,7 @@
 import '../helpers/web-resolver.js';
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const {
@@ -82,6 +82,8 @@ describe('loadAvailability (critérios 28 e 29)', () => {
     const result = await loadAvailability('salao-da-ana', SELECTION, { fetchFn });
     assert.equal(fetchFn.calls[0].url, availabilityUrl('salao-da-ana', SELECTION));
     assert.equal(fetchFn.calls[0].init.method, 'GET');
+    // AF-10 item 5 (AF-04, critério 16): a consulta pública nunca envia o cookie do dono.
+    assert.equal(fetchFn.calls[0].init.credentials, 'omit');
     assert.deepEqual(result, {
       ok: true,
       day: {
@@ -259,5 +261,40 @@ describe('sem relógio do navegador (critérios 12 e 18)', () => {
     const src = await readFile(fileURLToPath(new URL('../../web/js/public-booking-page.js', import.meta.url)), 'utf8');
     assert.match(src, /textContent/);
     assert.doesNotMatch(src, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
+  });
+});
+
+describe('JS público sem cookie e sem armazenamento (AF-04, critério 16)', () => {
+  const WEB_JS = fileURLToPath(new URL('../../web/js/', import.meta.url));
+
+  async function publicSources() {
+    const files = (await readdir(WEB_JS)).filter((f) => /^public-.*\.js$/.test(f) || f === 'customer-form-controller.js');
+    assert.ok(files.includes('public-booking-controller.js'));
+    assert.ok(files.includes('public-booking-page.js'));
+    assert.ok(files.includes('customer-form-controller.js'));
+    return Promise.all(files.map(async (file) => ({ file, src: await readFile(`${WEB_JS}${file}`, 'utf8') })));
+  }
+
+  test("toda chamada a requestJson/fetch passa credentials: 'omit'", async () => {
+    for (const { file, src } of await publicSources()) {
+      const calls = (src.match(/\brequestJson\(|\bfetch\(/g) || []).length;
+      const omits = (src.match(/credentials:\s*'omit'/g) || []).length;
+      assert.ok(omits >= calls, `${file}: ${calls} chamada(s), ${omits} credentials: 'omit'`);
+      assert.doesNotMatch(src, /credentials:\s*'(same-origin|include)'/, file);
+      assert.doesNotMatch(src, /\brequestBinary\b/, file);
+    }
+  });
+
+  test('sem localStorage nem sessionStorage', async () => {
+    for (const { file, src } of await publicSources()) {
+      assert.doesNotMatch(src, /localStorage|sessionStorage|indexedDB|document\.cookie/, file);
+    }
+  });
+
+  test('o passo "Seus dados" não faz chamada de rede no AF-04', async () => {
+    for (const file of ['customer-form-controller.js']) {
+      const src = await readFile(`${WEB_JS}${file}`, 'utf8');
+      assert.doesNotMatch(src, /\brequestJson\(|\bfetch\(|XMLHttpRequest|sendBeacon|\/api\.js'/, file);
+    }
   });
 });

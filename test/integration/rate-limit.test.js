@@ -551,7 +551,7 @@ test('sem sessão, PUT /hours responde 401 e não consome o limite do usuário',
 // ---------------------------------------------------------------------------
 
 const { seedPublicBusiness } = await import('../helpers/public-fixture.js');
-const { RATE_LIMITED_HTML, NOT_FOUND_HTML } = await import('../../src/modules/public-page/public-page.render.js');
+const { RATE_LIMITED_HTML, NOT_FOUND_HTML, PUBLIC_MESSAGE_CSP } = await import('../../src/modules/public-page/public-page.render.js');
 
 const visit = (app, url, remoteAddress = '10.1.1.1', extra = {}) =>
   app.inject({ method: 'GET', url, remoteAddress, ...extra });
@@ -569,6 +569,8 @@ function assertRateLimitedHtml(res) {
   assert.ok(Number(res.headers['retry-after']) >= 1);
   assert.ok(res.rawPayload.equals(RATE_LIMITED_HTML));
   assert.match(res.body, /Muitos acessos em pouco tempo\. Aguarde um instante e recarregue a página\./);
+  // AF-10 item 2 (AF-04): CSP sem script-src e sem connect-src.
+  assert.equal(res.headers['content-security-policy'], PUBLIC_MESSAGE_CSP);
 }
 
 test('publicPage.perIp 2: o 3º GET /<slug> do mesmo IP dá 429 HTML com Retry-After; outro IP passa', async () => {
@@ -903,6 +905,21 @@ test('sem sessão, GET e POST de bloqueios dão 401 e não consomem o limite do 
     }
     assert.equal((await postTimeBlock(app, ana, TIME_BLOCK)).statusCode, 201);
     assert.equal((await listTimeBlocks(app, ana)).statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AF-04 (decisão 3, critério 17): nenhuma rota nova de cliente para contar.
+// ---------------------------------------------------------------------------
+
+test('AF-04: nenhuma rota registrada contém "customers" (sem gravação pública isolada)', async () => {
+  const { app } = await buildTestApp();
+  try {
+    const routes = app.printRoutes({ commonPrefix: false });
+    assert.ok(routes.includes('availability'), 'printRoutes sem as rotas conhecidas');
+    assert.doesNotMatch(routes, /customer/i);
   } finally {
     await app.close();
   }

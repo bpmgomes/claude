@@ -1,5 +1,6 @@
-// Seção de horários da página pública (AF-10, 4.4). Todo texto entra por textContent; o relógio e
-// o fuso do navegador não entram em nada (hoje e fuso vêm do servidor).
+// Seção de horários da página pública (AF-10, 4.4) e passo "Seus dados" (AF-04, 4.4). Todo texto
+// entra por textContent; o relógio e o fuso do navegador não entram em nada (hoje e fuso vêm do
+// servidor). O passo "Seus dados" não faz nenhuma chamada de rede e não guarda nada no navegador.
 import {
   loadAvailability,
   createLatestOnly,
@@ -11,12 +12,72 @@ import {
   readyMessage,
   BOOKING_MESSAGES,
 } from './public-booking-controller.js';
+import { CUSTOMER_FIELDS, checkCustomerField, checkCustomerForm, phoneDisplayOnBlur } from './customer-form-controller.js';
 import { ANY_PROFESSIONAL, AVAILABILITY_MESSAGES, BOOKING_HORIZON_DAYS } from '/shared/availability.js';
 import { addLocalDays, parseLocalDate } from '/shared/zoned-time.js';
 
 const section = document.querySelector('.pp-booking');
 
 if (section) start(section);
+
+const customerForm = document.querySelector('#bk-customer');
+
+if (customerForm) startCustomerForm(customerForm);
+
+/**
+ * Validação por campo ao sair do campo; ao digitar, só remove um erro que deixou de valer. Os
+ * valores nunca são apagados (critério 7) e a máscara do telefone só entra ao sair do campo, num
+ * número válido (critério 24).
+ * @param {HTMLFormElement} form
+ */
+function startCustomerForm(form) {
+  const entries = CUSTOMER_FIELDS.map((field) => ({
+    field,
+    input: form.querySelector(`#bk-${field}`),
+    error: form.querySelector(`#bk-${field}-erro`),
+  })).filter((e) => e.input && e.error);
+
+  /**
+   * Erro do campo no `<p aria-live="polite">` associado por aria-describedby (critério 23). Sem
+   * anúncio duplicado: o texto só é reescrito quando muda (sair do campo de novo com o mesmo erro
+   * não repete o anúncio) e, com `{ quiet: true }`, o live region fica desligado nesta atualização,
+   * porque o foco vai para o campo e o leitor já lê a mensagem pela descrição.
+   */
+  function show(entry, message, { quiet = false } = {}) {
+    const text = message || '';
+    entry.error.setAttribute('aria-live', quiet ? 'off' : 'polite');
+    if (entry.error.textContent !== text) entry.error.textContent = text;
+    if (message) entry.input.setAttribute('aria-invalid', 'true');
+    else entry.input.removeAttribute('aria-invalid');
+  }
+
+  for (const entry of entries) {
+    entry.input.addEventListener('blur', () => {
+      const message = checkCustomerField(entry.field, entry.input.value);
+      show(entry, message);
+      if (!message && entry.field === 'phone') {
+        const display = phoneDisplayOnBlur(entry.input.value);
+        if (display !== entry.input.value) entry.input.value = display;
+      }
+    });
+    entry.input.addEventListener('input', () => {
+      if (entry.input.getAttribute('aria-invalid') !== 'true') return;
+      if (checkCustomerField(entry.field, entry.input.value) === null) show(entry, null);
+    });
+  }
+
+  // Envio nativo sempre bloqueado (a CSP também tem form-action 'none'). Até o AF-11 o botão fica
+  // desabilitado; aqui só valida tudo e põe o foco no primeiro campo inválido.
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(entries.map((e) => [e.field, e.input.value]));
+    const result = checkCustomerForm(values);
+    const fields = result.ok ? {} : result.fields;
+    const first = entries.find((e) => fields[e.field]);
+    for (const entry of entries) show(entry, fields[entry.field] || null, { quiet: entry === first });
+    if (first) first.input.focus();
+  });
+}
 
 function start(root) {
   const slug = root.dataset.slug || '';

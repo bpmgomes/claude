@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   renderPublicPage,
   PUBLIC_PAGE_CSP,
+  PUBLIC_MESSAGE_CSP,
   NOT_FOUND_HTML,
   RATE_LIMITED_HTML,
   ERROR_HTML,
@@ -190,7 +191,8 @@ describe('ação de agendar e estado vazio (critérios 7, 8 e 15)', () => {
     assert.equal(section['data-max-date'], '2027-02-24');
     assert.equal(section['data-timezone'], 'America/Sao_Paulo');
     assert.equal(tagsOf(html, 'div').filter((d) => d.id === 'agendar').length, 1);
-    assert.equal(tagsOf(html, 'form').length, 0);
+    // AF-04: o único formulário é o passo "Seus dados", dentro de .pp-confirm.
+    assert.deepEqual(tagsOf(html, 'form').map((f) => f.id), ['bk-customer']);
     assert.match(html, /<noscript><p class="pp-notice">Para ver os horários livres, ative o JavaScript ou ligue para <a href="tel:\+5511912345678">\(11\) 91234-5678<\/a>\.<\/p><\/noscript>/);
 
     const options = tagsOf(html, 'option');
@@ -219,6 +221,7 @@ describe('ação de agendar e estado vazio (critérios 7, 8 e 15)', () => {
     assert.equal(buttons[0].class, 'pp-confirm-button');
     assert.equal('disabled' in buttons[0], true);
     assert.equal(buttons[0]['aria-describedby'], 'confirmar-aviso');
+    assert.equal(buttons[0].type, 'submit');
     assert.match(html, />Confirmar agendamento<\/button>/);
     assert.match(html, /id="confirmar-aviso" class="pp-notice">A confirmação online chega em breve\. Este horário ainda não está reservado: para garantir, ligue para \(11\) 91234-5678\./);
     assert.ok(tagsOf(html, 'div').some((d) => d.class === 'pp-confirm' && 'hidden' in d));
@@ -239,6 +242,131 @@ describe('ação de agendar e estado vazio (critérios 7, 8 e 15)', () => {
     const text = textOf(renderPublicPage(page()));
     for (const expected of ['Corte', 'Barba', '30 min', 'R$ 50,00', '1 h 30 min', 'Sob consulta', 'Com: Ana, Bia']) {
       assert.ok(text.includes(expected), expected);
+    }
+  });
+});
+
+describe('passo "Seus dados" (AF-04, critérios 19, 21, 22 e 25)', () => {
+  /** Trecho de .pp-confirm (do div até o fim do form). */
+  function confirmBlock(html) {
+    const start = html.indexOf('<div class="pp-confirm" hidden>');
+    const end = html.indexOf('</form>', start);
+    assert.ok(start >= 0 && end > start);
+    return html.slice(start, end + '</form>'.length);
+  }
+
+  test('form novalidate sem action nem method, dentro de .pp-confirm', () => {
+    const html = renderPublicPage(page());
+    const block = confirmBlock(html);
+    const forms = tagsOf(block, 'form');
+    assert.equal(forms.length, 1);
+    const [form] = forms;
+    assert.equal(form.id, 'bk-customer');
+    assert.equal(form.class, 'pp-customer');
+    assert.equal('novalidate' in form, true);
+    assert.equal('action' in form, false);
+    assert.equal('method' in form, false);
+    assert.equal(form['aria-labelledby'], 'dados-titulo');
+    assert.match(block, /<h3 id="dados-titulo">Seus dados<\/h3>/);
+  });
+
+  test('campos com autocomplete, inputmode e type; label for; aria-describedby; sem maxlength', () => {
+    const html = renderPublicPage(page());
+    const block = confirmBlock(html);
+    const inputs = Object.fromEntries(tagsOf(block, 'input').map((i) => [i.id, i]));
+    assert.deepEqual(Object.keys(inputs), ['bk-name', 'bk-phone', 'bk-email']);
+    assert.equal(inputs['bk-name'].type, 'text');
+    assert.equal(inputs['bk-name'].autocomplete, 'name');
+    assert.equal(inputs['bk-name'].name, 'name');
+    assert.equal(inputs['bk-phone'].type, 'tel');
+    assert.equal(inputs['bk-phone'].inputmode, 'tel');
+    assert.equal(inputs['bk-phone'].autocomplete, 'tel-national');
+    assert.equal(inputs['bk-phone'].name, 'phone');
+    assert.equal(inputs['bk-email'].type, 'email');
+    assert.equal(inputs['bk-email'].autocomplete, 'email');
+    assert.equal(inputs['bk-email'].name, 'email');
+    assert.equal(inputs['bk-name']['aria-describedby'], 'bk-name-erro');
+    assert.equal(inputs['bk-phone']['aria-describedby'], 'bk-phone-dica bk-phone-erro');
+    assert.equal(inputs['bk-email']['aria-describedby'], 'bk-email-erro');
+    const ids = new Set([...block.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
+    const labels = tagsOf(block, 'label').map((l) => l.for);
+    for (const input of Object.values(inputs)) {
+      assert.ok(labels.includes(input.id), `${input.id} sem label`);
+      assert.equal('required' in input, true);
+      assert.equal('maxlength' in input, false);
+      for (const ref of input['aria-describedby'].split(' ')) assert.ok(ids.has(ref), `${input.id} -> ${ref}`);
+    }
+    for (const id of ['bk-name-erro', 'bk-phone-erro', 'bk-email-erro']) {
+      const [error] = tagsOf(block, 'p').filter((p) => p.id === id);
+      assert.equal(error.class, 'pp-field-error');
+      // Live region sempre presente (vazio sem erro): anunciado ao receber a mensagem (critério 23).
+      assert.equal(error['aria-live'], 'polite');
+      assert.equal('hidden' in error, false);
+      assert.equal('role' in error, false, 'sem role=alert (anúncio assertivo duplicado)');
+    }
+    assert.doesNotMatch(html, /maxlength/i);
+  });
+
+  test('botão submit desabilitado no formulário, com o aviso; texto sem promessa', () => {
+    const html = renderPublicPage(page());
+    const block = confirmBlock(html);
+    const [button] = tagsOf(block, 'button');
+    assert.equal(button.type, 'submit');
+    assert.equal('disabled' in button, true);
+    assert.equal(button['aria-describedby'], 'confirmar-aviso');
+    const text = textOf(html).toLowerCase();
+    assert.equal(text.includes('confirmado'), false);
+    assert.equal(text.includes('reservado para você'), false);
+    assert.ok(textOf(block).includes('Este horário ainda não está reservado'));
+  });
+
+  test('aviso de privacidade com o nome do negócio (critério 21)', () => {
+    const html = renderPublicPage(page());
+    const [privacy] = tagsOf(html, 'p').filter((p) => p.id === 'dados-privacidade');
+    assert.equal(privacy.class, 'pp-privacy');
+    assert.ok(
+      textOf(html).includes(
+        'Usamos seu nome, telefone e e-mail só para fazer este agendamento e avisar você sobre ele. Os dados são recebidos por Salão da Ana. Não pedimos senha nem criamos conta.',
+      ),
+    );
+  });
+
+  for (const payload of XSS) {
+    test(`XSS no nome do negócio (${payload}) sai escapado no aviso de privacidade`, () => {
+      const html = renderPublicPage(page({ name: payload }));
+      const block = confirmBlock(html);
+      const clean = confirmBlock(renderPublicPage(page()));
+      assert.deepEqual(tagNamesOf(block), tagNamesOf(clean));
+      assert.ok(block.includes(`Os dados são recebidos por ${escapeForTest(payload)}.`));
+      for (const name of new Set(tagNamesOf(block))) {
+        for (const attrs of tagsOf(block, name)) {
+          for (const key of Object.keys(attrs)) assert.doesNotMatch(key, /^(on|style$)/i, `${name} ${key}`);
+        }
+      }
+    });
+  }
+
+  test('sem oferta, sem formulário', () => {
+    assert.equal(tagsOf(renderPublicPage(page({ hasOffer: false })), 'form').length, 0);
+  });
+
+  test('os dois módulos do AF-04 estão no grafo pré-carregado', () => {
+    assert.ok(PUBLIC_BOOKING_MODULES.includes('/js/customer-form-controller.js'));
+    assert.ok(PUBLIC_BOOKING_MODULES.includes('/shared/customers.js'));
+  });
+});
+
+describe('CSP das páginas fixas (AF-10 item 2)', () => {
+  test('PUBLIC_MESSAGE_CSP sem script-src e sem connect-src; 404, 429 e 500 sem script nem modulepreload', () => {
+    assert.doesNotMatch(PUBLIC_MESSAGE_CSP, /script-src|connect-src|unsafe/);
+    assert.match(PUBLIC_MESSAGE_CSP, /^default-src 'none';/);
+    assert.match(PUBLIC_MESSAGE_CSP, /form-action 'none'/);
+    assert.match(PUBLIC_MESSAGE_CSP, /frame-ancestors 'none'/);
+    assert.match(PUBLIC_MESSAGE_CSP, /style-src 'self'/);
+    for (const buffer of [NOT_FOUND_HTML, RATE_LIMITED_HTML, ERROR_HTML]) {
+      const html = buffer.toString();
+      assert.equal(tagsOf(html, 'script').length, 0);
+      assert.equal(tagsOf(html, 'link').filter((l) => l.rel === 'modulepreload').length, 0);
     }
   });
 });

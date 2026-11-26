@@ -65,7 +65,8 @@ function fieldMessage(error) {
  *   | { ok: false, status: number, message: string, aborted?: boolean }>}
  */
 export async function loadAvailability(slug, selection, { fetchFn, signal } = {}) {
-  const options = { signal };
+  // Rota pública: nunca envia o cookie do dono (AF-10 item 5, AF-04 critério 16).
+  const options = { signal, credentials: 'omit' };
   if (fetchFn) options.fetchFn = fetchFn;
   const res = await requestJson(availabilityUrl(slug, selection), options);
   if (signal && signal.aborted) return { ...failure(0, BOOKING_MESSAGES.unavailable), aborted: true };

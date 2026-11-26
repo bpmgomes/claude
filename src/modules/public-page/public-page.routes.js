@@ -2,9 +2,11 @@ import { createHash } from 'node:crypto';
 import { sharedPublicGuards } from '../../http/route-guards.js';
 import { NotFoundError } from '../../http/errors.js';
 import { parsePublicSlug } from '../../shared/slug.js';
+import { areaOf } from '../../http/api-path.js';
 import {
   renderPublicPage,
   PUBLIC_PAGE_CSP,
+  PUBLIC_MESSAGE_CSP,
   NOT_FOUND_HTML,
   RATE_LIMITED_HTML,
   ERROR_HTML,
@@ -18,18 +20,18 @@ export const PUBLIC_PAGE_BYTES_BUDGET = 500 * 1024;
 export const PUBLIC_PAGE_CACHE_CONTROL = `public, max-age=${PUBLIC_PAGE_MAX_AGE_SECONDS}`;
 const NO_STORE = 'no-store';
 
-/** Prefixos que mantêm o 404 JSON da API (o resto recebe o 404 HTML uniforme). */
-const JSON_404_PREFIXES = Object.freeze(['/api/', '/media/', '/shared/']);
+/** Áreas que mantêm o 404 JSON da API (o resto recebe o 404 HTML uniforme). */
+const JSON_404_AREAS = Object.freeze(['api', 'media', 'shared']);
 
 /**
  * GET/HEAD fora de /api/, /media/ e /shared/: recebe o 404 HTML uniforme (notFound e
- * frameworkErrors, design AF-09 4.1).
+ * frameworkErrors, design AF-09 4.1). A área vem do caminho decodificado como o roteador faz
+ * (`/%61pi/x` é da API, src/http/api-path.js).
  * @param {{ method: string, url?: string, raw?: { url?: string } }} request
  */
 export function wantsHtmlNotFound(request) {
   if (request.method !== 'GET' && request.method !== 'HEAD') return false;
-  const url = String(request.raw?.url ?? request.url ?? '');
-  return !JSON_404_PREFIXES.some((prefix) => url.startsWith(prefix));
+  return !JSON_404_AREAS.includes(areaOf(request.raw?.url ?? request.url));
 }
 
 /**
@@ -39,14 +41,15 @@ export function wantsHtmlNotFound(request) {
  * @param {import('fastify').FastifyReply} reply
  * @param {number} status
  * @param {string|Buffer|null} body
- * @param {{ cacheControl: string }} options
+ * @param {{ cacheControl: string, csp?: string }} options `csp`: padrão PUBLIC_PAGE_CSP; as páginas
+ *   fixas (404, 429, 500) usam PUBLIC_MESSAGE_CSP, sem script (AF-10 item 2)
  */
-export function sendHtml(reply, status, body, { cacheControl }) {
+export function sendHtml(reply, status, body, { cacheControl, csp = PUBLIC_PAGE_CSP }) {
   reply
     .status(status)
     .header('Content-Type', 'text/html; charset=utf-8')
     .header('Cache-Control', cacheControl)
-    .header('Content-Security-Policy', PUBLIC_PAGE_CSP)
+    .header('Content-Security-Policy', csp)
     .header('X-Content-Type-Options', 'nosniff')
     .header('Referrer-Policy', 'no-referrer')
     .header('X-Frame-Options', 'DENY');
@@ -56,12 +59,12 @@ export function sendHtml(reply, status, body, { cacheControl }) {
 /** 404 uniforme: mesmos bytes, status e cabeçalhos, sem refletir a entrada. */
 export function sendNotFoundPage(reply) {
   reply.header('X-Robots-Tag', 'noindex');
-  return sendHtml(reply, 404, NOT_FOUND_HTML, { cacheControl: PUBLIC_PAGE_CACHE_CONTROL });
+  return sendHtml(reply, 404, NOT_FOUND_HTML, { cacheControl: PUBLIC_PAGE_CACHE_CONTROL, csp: PUBLIC_MESSAGE_CSP });
 }
 
 /** 429 em HTML curto e fixo; o `Retry-After` já foi definido pelo @fastify/rate-limit. */
 export function sendRateLimitedPage(reply) {
-  return sendHtml(reply, 429, RATE_LIMITED_HTML, { cacheControl: NO_STORE });
+  return sendHtml(reply, 429, RATE_LIMITED_HTML, { cacheControl: NO_STORE, csp: PUBLIC_MESSAGE_CSP });
 }
 
 /** 301 decidido só pelo formato, antes de qualquer consulta; sem query string. */
@@ -89,7 +92,7 @@ function publicErrorHandler(error, request, reply) {
   if (error && error.statusCode === 429) return sendRateLimitedPage(reply);
   if (error instanceof NotFoundError) return sendNotFoundPage(reply);
   request.log.error({ event: 'public_page_error', err: error });
-  return sendHtml(reply, 500, ERROR_HTML, { cacheControl: NO_STORE });
+  return sendHtml(reply, 500, ERROR_HTML, { cacheControl: NO_STORE, csp: PUBLIC_MESSAGE_CSP });
 }
 
 /**

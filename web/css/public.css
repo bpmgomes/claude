@@ -299,6 +299,65 @@ section h2 {
   cursor: not-allowed;
 }
 
+/* Passo "Seus dados" (AF-04). Nenhuma largura fixa acima de 320 px; inputs com 1rem (sem zoom no iOS). */
+.pp-customer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.pp-customer h3 { margin: 8px 0 0; }
+
+.pp-privacy, .pp-hint {
+  margin: 0;
+  color: #4b5563;
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+.pp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pp-field label {
+  display: block;
+  font-weight: 600;
+}
+
+.pp-field input {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px solid #6b7280;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 1rem;
+  color: #1f2937;
+  background: #fff;
+}
+
+.pp-field input[aria-invalid="true"] {
+  border: 2px solid #b91c1c;
+}
+
+.pp-field-error {
+  margin: 0;
+  color: #b91c1c;
+  background: #fff;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pp-customer .pp-confirm-button { align-self: flex-start; }
+
 .pp-message {
   padding-top: 48px;
   text-align: center;

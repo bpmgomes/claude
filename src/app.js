@@ -44,8 +44,11 @@ import publicPageRoutes, {
   wantsHtmlNotFound,
 } from './modules/public-page/public-page.routes.js';
 import { createSharedPublicLimiter } from './http/route-guards.js';
+import { isApiRequest } from './http/api-path.js';
 import { createAvailabilityService } from './modules/availability/availability.service.js';
 import availabilityRoutes from './modules/availability/availability.routes.js';
+import { createCustomersRepository } from './modules/customers/customers.repository.js';
+import { createCustomersService } from './modules/customers/customers.service.js';
 import { createImageLimiter } from './images/image-limiter.js';
 import { createStorage } from './storage/index.js';
 
@@ -81,6 +84,14 @@ export const REDACT_PATHS = [
   '*.passwordHash',
   '*.password_hash',
   'body.password',
+  // Corpo do AF-11 (`customer: { name, phone, email }`): dado pessoal nunca vai para o log (AF-04,
+  // critério 20), em qualquer nível até 4 (ex.: `customer`, `body.customer`, `req.body.customer`,
+  // `err.details.body.customer`).
+  'customer',
+  'body.customer',
+  '*.customer',
+  '*.*.customer',
+  '*.*.*.customer',
 ];
 
 /** Páginas HTML servidas pelo app. Todo caminho aqui precisa estar em RESERVED_SLUGS (teste). */
@@ -241,6 +252,9 @@ export async function buildApp(overrides = {}) {
     now,
     log: app.log,
   });
+  // Porta customers (AF-04): sem rota própria; só o AF-11 (e o AF-15) chama, com a transação dele.
+  const customersRepository = createCustomersRepository(db);
+  const customersService = createCustomersService({ customersRepository, now });
   const authService = createAuthService({
     db,
     usersRepository,
@@ -272,6 +286,8 @@ export async function buildApp(overrides = {}) {
     timeBlocksService,
     publicPageService,
     availabilityService,
+    customersRepository,
+    customersService,
     imageLimiter,
   });
 
@@ -295,6 +311,14 @@ export async function buildApp(overrides = {}) {
         objectSrc: ["'none'"],
       },
     },
+  });
+  // `no-store` em toda resposta de /api/* sem política própria, inclusive erros e o 404 JSON
+  // (AF-16 item 5, AF-04 critério 16). Decide pela rota casada (ou, sem rota, pelo caminho
+  // decodificado), nunca pelo texto bruto: `/%61pi/business` é `/api/business` (src/http/api-path.js).
+  // O JSON de `frameworkErrors` já define o seu.
+  app.addHook('onSend', async (request, reply, payload) => {
+    if (isApiRequest(request) && !reply.hasHeader('cache-control')) reply.header('Cache-Control', 'no-store');
+    return payload;
   });
   await app.register(cookie);
   await app.register(csrfPlugin);

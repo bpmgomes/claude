@@ -8,6 +8,7 @@ import { pngOf } from '../helpers/images.js';
 import { tagsOf, tagNamesOf, textOf } from '../helpers/html.js';
 import {
   PUBLIC_PAGE_CSP,
+  PUBLIC_MESSAGE_CSP,
   NOT_FOUND_HTML,
   ERROR_HTML,
   PUBLIC_BOOKING_MODULES,
@@ -91,6 +92,25 @@ describe('página de referência (critérios 1, 2, 10, 16, 17, 22, 23)', () => {
     );
     for (const img of imgs) assert.ok(img.width && img.height && img.alt);
     for (const img of imgs) assert.equal((await get(app, img.src)).statusCode, 200, img.src);
+  });
+
+  test('AF-04: a página continua com a CSP própria e o cache de 60 s, e não traz dado de cliente', async () => {
+    const tx = (fn) => app.db.transaction(fn);
+    await tx((conn) =>
+      app.services.customersService.findOrCreate(
+        seed.business.id,
+        { name: 'Cliente Secreta', phone: '(21) 98765-4321', email: 'secreta@cliente.com' },
+        conn,
+      ),
+    );
+    const res = await get(app, `/${seed.slug}`);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.headers['content-security-policy'], PUBLIC_PAGE_CSP);
+    assert.equal(res.headers['cache-control'], 'public, max-age=60');
+    for (const needle of ['Cliente Secreta', 'secreta@cliente.com', '98765-4321', '21987654321']) {
+      assert.equal(res.body.includes(needle), false, needle);
+    }
+    assert.equal(tagsOf(res.body, 'form').filter((f) => f.id === 'bk-customer').length, 1);
   });
 
   test('cabeçalhos de segurança (critério 22)', async () => {
@@ -208,7 +228,9 @@ describe('página de referência (critérios 1, 2, 10, 16, 17, 22, 23)', () => {
     assert.equal(reference404.statusCode, 404);
     assert.equal(reference404.headers['content-type'], 'text/html; charset=utf-8');
     assert.equal(reference404.headers['cache-control'], 'public, max-age=60');
-    assert.equal(reference404.headers['content-security-policy'], PUBLIC_PAGE_CSP);
+    // AF-10 item 2 (AF-04): o 404 sai com a CSP sem script e sem connect-src.
+    assert.equal(reference404.headers['content-security-policy'], PUBLIC_MESSAGE_CSP);
+    assert.doesNotMatch(reference404.headers['content-security-policy'], /script-src|connect-src/);
     assert.equal(reference404.headers['x-robots-tag'], 'noindex');
     const cases = [
       '/inexistente',
@@ -238,7 +260,7 @@ describe('página de referência (critérios 1, 2, 10, 16, 17, 22, 23)', () => {
     }
     const head = await app.inject({ method: 'HEAD', url: '/inexistente' });
     assert.equal(head.statusCode, 404);
-    assert.equal(head.headers['content-security-policy'], PUBLIC_PAGE_CSP);
+    assert.equal(head.headers['content-security-policy'], PUBLIC_MESSAGE_CSP);
   });
 
   test('a API continua com o 404 JSON', async () => {
@@ -257,11 +279,12 @@ describe('página de referência (critérios 1, 2, 10, 16, 17, 22, 23)', () => {
     const htmlReference = await get(app, '/nada', { headers: { accept: 'text/html' } });
     for (const name of helmetOnly) assert.ok(jsonReference.headers[name], `referência sem ${name}`);
 
-    // JSON 400: o conjunto do 404 da API mais o no-store.
+    // JSON 400: o mesmo conjunto do 404 da API (que, desde o AF-04, também traz o no-store).
+    assert.equal(jsonReference.headers['cache-control'], 'no-store');
     for (const url of ['/api/public/%E0%A4%A/availability', '/api/%E0%A4%A']) {
       const res = await get(app, url);
       assert.equal(res.statusCode, 400, url);
-      assert.deepEqual(names(res), [...names(jsonReference), 'cache-control'].sort(), url);
+      assert.deepEqual(names(res), names(jsonReference), url);
       for (const name of helmetOnly) assert.equal(res.headers[name], jsonReference.headers[name], `${url}: ${name}`);
     }
     // 404 HTML: exatamente o conjunto (e os valores) de um 404 HTML normal.
@@ -504,7 +527,8 @@ test('erro inesperado: 500 HTML fixo, no-store e log public_page_error sem eco',
     assert.ok(res.rawPayload.equals(ERROR_HTML));
     assert.equal(res.headers['cache-control'], 'no-store');
     assert.equal(res.headers['content-type'], 'text/html; charset=utf-8');
-    assert.equal(res.headers['content-security-policy'], PUBLIC_PAGE_CSP);
+    assert.equal(res.headers['content-security-policy'], PUBLIC_MESSAGE_CSP);
+    assert.doesNotMatch(res.headers['content-security-policy'], /script-src|connect-src/);
     assert.match(logs(), /"event":"public_page_error"/);
     assert.match(res.body, /Não foi possível carregar a página agora\. Tente novamente em instantes\./);
   } finally {

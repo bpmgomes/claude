@@ -10,6 +10,13 @@ import { html } from '../../http/html.js';
 export const PUBLIC_PAGE_CSP =
   "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
+/**
+ * CSP das páginas curtas e fixas (404, 429 e 500): a da página pública sem `script-src` e sem
+ * `connect-src` (AF-10 item 2). Elas não têm script nem fetch.
+ */
+export const PUBLIC_MESSAGE_CSP =
+  "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
 /** Ponto de entrada do módulo de horários. */
 export const PUBLIC_BOOKING_ENTRY = '/js/public-booking-page.js';
 
@@ -20,7 +27,9 @@ export const PUBLIC_BOOKING_ENTRY = '/js/public-booking-page.js';
 export const PUBLIC_BOOKING_MODULES = Object.freeze([
   PUBLIC_BOOKING_ENTRY,
   '/js/public-booking-controller.js',
+  '/js/customer-form-controller.js',
   '/js/api.js',
+  '/shared/customers.js',
   '/shared/availability.js',
   '/shared/zoned-time.js',
   '/shared/services.js',
@@ -135,6 +144,39 @@ function professionalOption(professional) {
 `;
 }
 
+/**
+ * Passo "Seus dados" (AF-04, 4.4). Formulário real para o autocomplete do navegador, sem `action`
+ * nem `method`: o envio é sempre interceptado no JS e a CSP tem `form-action 'none'`. Sem
+ * `maxlength` (cortaria em silêncio um telefone colado com máscara). Até o AF-11, o botão fica
+ * desabilitado e nenhum dado sai do navegador. Cada erro de campo fica num `<p aria-live="polite">`
+ * sempre presente (vazio sem erro): um live region oculto com `hidden` não é anunciado de forma
+ * confiável ao aparecer.
+ */
+function customerForm(business) {
+  return html`<form class="pp-customer" id="bk-customer" novalidate aria-labelledby="dados-titulo">
+<h3 id="dados-titulo">Seus dados</h3>
+<p class="pp-privacy" id="dados-privacidade">Usamos seu nome, telefone e e-mail só para fazer este agendamento e avisar você sobre ele. Os dados são recebidos por ${business.name}. Não pedimos senha nem criamos conta.</p>
+<div class="pp-field">
+<label for="bk-name">Nome</label>
+<input id="bk-name" name="name" type="text" autocomplete="name" autocapitalize="words" required aria-describedby="bk-name-erro">
+<p class="pp-field-error" id="bk-name-erro" aria-live="polite"></p>
+</div>
+<div class="pp-field">
+<label for="bk-phone">Telefone (com DDD)</label>
+<input id="bk-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel-national" required aria-describedby="bk-phone-dica bk-phone-erro">
+<p class="pp-hint" id="bk-phone-dica">Celular ou fixo. Ex.: (11) 91234-5678</p>
+<p class="pp-field-error" id="bk-phone-erro" aria-live="polite"></p>
+</div>
+<div class="pp-field">
+<label for="bk-email">E-mail</label>
+<input id="bk-email" name="email" type="email" autocomplete="email" autocapitalize="off" spellcheck="false" required aria-describedby="bk-email-erro">
+<p class="pp-field-error" id="bk-email-erro" aria-live="polite"></p>
+</div>
+<button type="submit" class="pp-confirm-button" disabled aria-describedby="confirmar-aviso">Confirmar agendamento</button>
+<p id="confirmar-aviso" class="pp-notice">A confirmação online chega em breve. Este horário ainda não está reservado: para garantir, ligue para ${business.phoneDisplay}.</p>
+</form>`;
+}
+
 /** Seção de horários (AF-10, 4.4): oculta sem JavaScript, com o aviso do <noscript>. */
 function booking(page) {
   const { business, booking: b } = page;
@@ -157,8 +199,7 @@ ${page.professionals.map(professionalOption)}</select>
 <ul class="pp-slots" aria-label="Horários livres"></ul>
 <div class="pp-confirm" hidden>
 <p class="pp-selected"></p>
-<button type="button" class="pp-confirm-button" disabled aria-describedby="confirmar-aviso">Confirmar agendamento</button>
-<p id="confirmar-aviso" class="pp-notice">A confirmação online chega em breve. Este horário ainda não está reservado: para garantir, ligue para ${business.phoneDisplay}.</p>
+${customerForm(business)}
 </div>
 </section>
 </div>`;

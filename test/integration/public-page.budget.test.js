@@ -112,7 +112,9 @@ test('AF-10: todo o grafo de imports do módulo de horários tem modulepreload e
     for (const url of preloaded) assert.ok(graph.has(url), `${url} pré-carregado sem estar no grafo`);
 
     const jsBytes = [...graph.values()].reduce((a, b) => a + b, 0);
-    assert.ok(jsBytes < 60 * 1024, `JS do grafo: ${jsBytes} B`);
+    // AF-04: o passo "Seus dados" acrescenta /shared/customers.js e /js/customer-form-controller.js
+    // (cerca de 11 KB sem compressão); o teto do JS sobe de 60 para 80 KB. O orçamento total segue 500 KB.
+    assert.ok(jsBytes < 80 * 1024, `JS do grafo: ${jsBytes} B`);
     const { total, report } = await measure(app, seed.slug);
     assert.ok(total <= PUBLIC_PAGE_BYTES_BUDGET, `total ${total} B acima do orçamento:\n${report}`);
   } finally {

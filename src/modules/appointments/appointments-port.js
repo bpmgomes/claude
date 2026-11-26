@@ -44,6 +44,8 @@ FIND_WEEKLY_IDS_MAX ids, e convertida no fuso do negócio).
  * (ou de todos os ativos, se professionalId for null). `items` vem ordenado por starts_at, id, com
  * até `limit` itens; `total` é o total real. `versionKey` é opaco e muda sempre que o CONJUNTO muda
  * (sugestão para o AF-11: sha256 dos ids ordenados, ou COUNT + MAX(updated_at)).
+ * `items[].customerName` é o `customer_name` do snapshot do agendamento (AF-04, design 4.5), nunca
+ * `customers.name`: o registro do cliente guarda os dados do primeiro agendamento e não é sobrescrito.
  *
  * findBusyByBusiness (AF-10, design 4.3) alimenta o cálculo de horários disponíveis. Ocupado = NÃO
  * cancelado E starts_at < toIso E ends_at > fromIso (intersecção semiaberta), de profissional ativo

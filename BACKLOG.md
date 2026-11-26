@@ -56,7 +56,7 @@ Critérios de aceite
 - Após redefinir, todas as sessões ativas são encerradas.
 
 ### AF-04 · Cadastro rápido do cliente final
-Tipo: História · Prioridade: Média · Pontos: 2 · Status: TODO
+Tipo: História · Prioridade: Média · Pontos: 2 · Status: DONE
 
 Como cliente final, quero agendar informando só nome, telefone e e-mail, sem criar senha.
 

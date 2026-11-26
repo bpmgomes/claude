@@ -1,6 +1,6 @@
-// E2E da página pública (AF-09 e AF-10): responsividade, acessibilidade, imagens, CLS, XSS e a
-// seção de horários no Chromium. Fora do `npm test`: `npm run test:e2e` (Playwright e Chromium do
-// ambiente, sem throttling). Relógio do servidor fixo: quinta-feira 2026-11-26, 09:00 em São Paulo.
+// E2E da página pública (AF-09, AF-10 e AF-04): responsividade, acessibilidade, imagens, CLS, XSS,
+// a seção de horários e o passo "Seus dados" no Chromium. Fora do `npm test`: `npm run test:e2e`
+// (Playwright e Chromium do ambiente, sem throttling). Relógio do servidor fixo: quinta-feira 2026-11-26, 09:00 em São Paulo.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadPlaywright } from './playwright.js';
@@ -52,7 +52,7 @@ after(async () => {
   if (server) await server.close();
 });
 
-async function open(path, { width = 360, height = 800 } = {}) {
+async function open(path, { width = 360, height = 800, baseUrl = server.baseUrl } = {}) {
   const context = await browser.newContext({ viewport: { width, height } });
   const page = await context.newPage();
   const dialogs = [];
@@ -60,7 +60,7 @@ async function open(path, { width = 360, height = 800 } = {}) {
     dialogs.push(dialog.message());
     await dialog.dismiss();
   });
-  const response = await page.goto(`${server.baseUrl}${path}`, { waitUntil: 'load' });
+  const response = await page.goto(`${baseUrl}${path}`, { waitUntil: 'load' });
   return { context, page, response, dialogs };
 }
 
@@ -580,6 +580,265 @@ describe('horários disponíveis (AF-10, critérios 22 e 28 a 30)', () => {
       const text = await page.locator('#agendar').innerText();
       assert.match(text, /Para ver os horários livres, ative o JavaScript ou ligue para \(11\) 91234-5678\./);
       assert.equal(await page.locator('.pp-service-name').count(), 20);
+      // AF-04: o formulário "Seus dados" também fica oculto.
+      assert.equal(await page.locator('#bk-customer').count(), 1);
+      assert.equal(await page.locator('#bk-customer').isVisible(), false);
+      assert.equal(await page.locator('#bk-name').isVisible(), false);
+    } finally {
+      await context.close();
+    }
+  });
+});
+
+/**
+ * Servidor próprio do passo "Seus dados", com o rate limit padrão LIGADO: cada teste consulta os
+ * horários ao menos uma vez, e o teto de custo de horários (30 por minuto e por IP) do servidor
+ * principal já é quase todo usado pelos testes do AF-10.
+ */
+let customerServer;
+
+/** Abre a página, escolhe o 1º serviço, sexta 27/11 e o primeiro horário. */
+async function openCustomerStep(path = '/dados', options = {}) {
+  const opened = await open(path, { ...options, baseUrl: customerServer.baseUrl });
+  const data = path === '/xss-dados' ? customerServer.data.xss : customerServer.data.reference;
+  await chooseInPage(opened.page, { serviceId: data.services[0].id, date: FRIDAY });
+  await waitReady(opened.page, 'sex, 27/11');
+  await opened.page.locator('.pp-slot').first().click();
+  await opened.page.locator('#bk-customer').waitFor({ state: 'visible' });
+  return opened;
+}
+
+describe('passo "Seus dados" (AF-04)', () => {
+  before(async () => {
+    customerServer = await startServer({
+      now: NOW,
+      seed: async (app) => ({
+        reference: await seedPublicBusiness(app, { services: 2, professionals: 2, logo: null, photos: false, slug: 'dados' }),
+        xss: await seedPublicBusiness(app, {
+          services: 1,
+          professionals: 1,
+          logo: null,
+          photos: false,
+          slug: 'xss-dados',
+          names: { business: SCRIPT_PAYLOAD, address: IMG_PAYLOAD, service: IMG_PAYLOAD, professional: SCRIPT_PAYLOAD },
+        }),
+      }),
+    });
+  });
+
+  after(async () => {
+    if (customerServer) await customerServer.close();
+  });
+
+  test('escolher o horário mostra os três campos, o aviso de privacidade e o botão desabilitado (critérios 21, 22 e 25)', async () => {
+    const { context, page } = await openCustomerStep();
+    try {
+      for (const id of ['#bk-name', '#bk-phone', '#bk-email']) assert.equal(await page.locator(id).isVisible(), true, id);
+      assert.equal(await page.locator('#dados-titulo').textContent(), 'Seus dados');
+      assert.equal(await page.locator('label[for="bk-name"]').textContent(), 'Nome');
+      assert.equal(await page.locator('#bk-phone').getAttribute('inputmode'), 'tel');
+      assert.equal(await page.locator('#bk-phone').getAttribute('autocomplete'), 'tel-national');
+      assert.equal(await page.locator('#bk-email').getAttribute('type'), 'email');
+      const privacy = await page.locator('#dados-privacidade').textContent();
+      assert.match(privacy, /Usamos seu nome, telefone e e-mail só para fazer este agendamento/);
+      assert.ok(privacy.includes(customerServer.data.reference.business.name));
+      const button = page.locator('#bk-customer .pp-confirm-button');
+      assert.equal(await button.isVisible(), true);
+      assert.equal(await button.isDisabled(), true);
+      assert.equal(await button.textContent(), 'Confirmar agendamento');
+      const text = (await page.locator('.pp-confirm').innerText()).toLowerCase();
+      assert.equal(text.includes('confirmado'), false);
+      assert.match(text, /este horário ainda não está reservado/);
+    } finally {
+      await context.close();
+    }
+  });
+
+  for (const width of [360, 414]) {
+    test(`${width} px: sem rolagem horizontal; campos e botão com pelo menos 44 px (critério 23)`, async () => {
+      const { context, page } = await openCustomerStep('/dados', { width });
+      try {
+        const info = await page.evaluate(() => {
+          const vw = window.innerWidth;
+          const heights = [...document.querySelectorAll('#bk-customer input, #bk-customer button')].map((el) => ({
+            id: el.id || el.className,
+            h: el.getBoundingClientRect().height,
+            w: el.getBoundingClientRect().width,
+          }));
+          const overflowing = [...document.querySelectorAll('#bk-customer *')]
+            .map((el) => ({ el, r: el.getBoundingClientRect() }))
+            .filter(({ r }) => r.width > 0 && r.right > vw + 0.5)
+            .map(({ el, r }) => `${el.tagName}.${el.className} ${r.right}`);
+          const fontSizes = [...document.querySelectorAll('#bk-customer input')].map((el) => Number.parseFloat(getComputedStyle(el).fontSize));
+          return { vw, scrollWidth: document.documentElement.scrollWidth, heights, overflowing, fontSizes };
+        });
+        assert.ok(info.scrollWidth <= info.vw, `scrollWidth ${info.scrollWidth} > ${info.vw}`);
+        assert.deepEqual(info.overflowing, []);
+        assert.equal(info.heights.length, 4);
+        for (const el of info.heights) assert.ok(el.h >= 44 && el.w >= 44, `${el.id} ${el.w}x${el.h}`);
+        for (const size of info.fontSizes) assert.ok(size >= 16, `fonte ${size}px`);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+
+  test('erro por campo ao sair do telefone; corrigir remove o erro e formata; os outros campos ficam intactos (critérios 3, 7, 23 e 24)', async () => {
+    const { context, page } = await openCustomerStep();
+    try {
+      await page.fill('#bk-name', 'Ana Souza');
+      await page.fill('#bk-email', 'ana@example.com');
+      const phone = page.locator('#bk-phone');
+      await phone.fill('12345');
+      await phone.blur();
+      const error = page.locator('#bk-phone-erro');
+      assert.equal(await error.isVisible(), true);
+      assert.equal(await error.textContent(), 'Informe um celular ou telefone fixo com DDD, ex.: (11) 91234-5678.');
+      assert.equal(await phone.getAttribute('aria-invalid'), 'true');
+      assert.ok((await phone.getAttribute('aria-describedby')).split(' ').includes('bk-phone-erro'));
+      // Live region polido; o mesmo erro ao sair de novo não reescreve o texto (sem anúncio repetido).
+      assert.equal(await error.getAttribute('aria-live'), 'polite');
+      assert.equal(await error.getAttribute('role'), null);
+      await page.evaluate(() => {
+        window.__mutations = 0;
+        new MutationObserver((list) => {
+          window.__mutations += list.length;
+        }).observe(document.querySelector('#bk-phone-erro'), { childList: true, characterData: true, subtree: true });
+      });
+      await phone.focus();
+      await phone.blur();
+      await page.evaluate(() => new Promise((r) => setTimeout(r, 50)));
+      assert.equal(await page.evaluate(() => window.__mutations), 0, 'o erro igual foi reescrito');
+      assert.equal(await phone.inputValue(), '12345', 'o valor inválido continua no campo');
+      assert.equal(await page.locator('#bk-name').inputValue(), 'Ana Souza');
+      assert.equal(await page.locator('#bk-email').inputValue(), 'ana@example.com');
+      assert.equal(await page.locator('#bk-name-erro').isVisible(), false);
+
+      await phone.fill('+55 (11) 91234-5678');
+      assert.equal(await error.isVisible(), false, 'o erro sai ao ficar válido, durante a digitação');
+      assert.equal(await phone.getAttribute('aria-invalid'), null);
+      assert.equal(await phone.inputValue(), '+55 (11) 91234-5678', 'sem máscara durante a digitação');
+      await phone.blur();
+      assert.equal(await phone.inputValue(), '(11) 91234-5678');
+      assert.equal(await error.isVisible(), false);
+      assert.equal(await page.locator('#bk-name').inputValue(), 'Ana Souza');
+      assert.equal(await page.locator('#bk-email').inputValue(), 'ana@example.com');
+
+      // Nome e e-mail inválidos também ganham o erro do próprio campo.
+      await page.fill('#bk-name', 'A');
+      await page.locator('#bk-name').blur();
+      assert.equal(await page.locator('#bk-name-erro').textContent(), 'O nome deve ter de 2 a 80 caracteres.');
+      await page.fill('#bk-email', 'ana@');
+      await page.locator('#bk-email').blur();
+      assert.equal(await page.locator('#bk-email-erro').textContent(), 'Informe um e-mail válido.');
+      assert.equal(await phone.inputValue(), '(11) 91234-5678');
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('colar 011 91234 5678 não é bloqueado nem reescrito durante a digitação (critério 24)', async () => {
+    const { context, page } = await openCustomerStep();
+    try {
+      const phone = page.locator('#bk-phone');
+      await phone.fill('011 91234 5678');
+      assert.equal(await phone.inputValue(), '011 91234 5678');
+      await phone.fill('');
+      await phone.focus();
+      const prevented = await page.evaluate(() => {
+        const data = new DataTransfer();
+        data.setData('text/plain', '011 91234 5678');
+        const event = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true });
+        document.querySelector('#bk-phone').dispatchEvent(event);
+        return event.defaultPrevented;
+      });
+      assert.equal(prevented, false, 'o paste foi bloqueado');
+      await page.keyboard.insertText('011 91234 5678');
+      assert.equal(await phone.inputValue(), '011 91234 5678');
+      await phone.blur();
+      assert.equal(await phone.inputValue(), '011 91234 5678');
+      assert.equal(await page.locator('#bk-phone-erro').isVisible(), true);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('trocar a data esconde o passo; escolher um horário de novo mostra os mesmos valores e erros (critério 7)', async () => {
+    const { context, page } = await openCustomerStep();
+    try {
+      await page.fill('#bk-name', 'Ana Souza');
+      await page.fill('#bk-phone', '123');
+      await page.locator('#bk-phone').blur();
+      await page.fill('#bk-email', 'ana@example.com');
+      await page.fill('#bk-date', '2026-11-30');
+      await waitReady(page, 'seg, 30/11');
+      assert.equal(await page.locator('#bk-customer').isVisible(), false);
+      await page.locator('.pp-slot').first().click();
+      await page.locator('#bk-customer').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#bk-name').inputValue(), 'Ana Souza');
+      assert.equal(await page.locator('#bk-phone').inputValue(), '123');
+      assert.equal(await page.locator('#bk-email').inputValue(), 'ana@example.com');
+      assert.equal(await page.locator('#bk-phone-erro').isVisible(), true);
+      // Outro horário só atualiza o resumo.
+      await page.locator('.pp-slot').nth(1).click();
+      assert.equal(await page.locator('#bk-name').inputValue(), 'Ana Souza');
+      assert.match(await page.locator('.pp-selected').textContent(), /seg, 30\/11/);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('sem rede no passo: digitar, Enter e clicar no botão desabilitado não geram requisição nem mudam a URL (decisão 3)', async () => {
+    const { context, page } = await openCustomerStep();
+    try {
+      const requests = [];
+      page.on('request', (req) => requests.push(`${req.method()} ${req.url()}`));
+      const url = page.url();
+      await page.fill('#bk-name', 'Ana Souza');
+      await page.fill('#bk-phone', '(11) 91234-5678');
+      await page.fill('#bk-email', 'ana@example.com');
+      await page.locator('#bk-email').press('Enter');
+      await page.locator('#bk-name').press('Enter');
+      await page.locator('#bk-customer .pp-confirm-button').click({ force: true, timeout: 2000 }).catch(() => {});
+      await page.waitForTimeout(300);
+      assert.deepEqual(requests, []);
+      assert.equal(page.url(), url);
+      for (const value of ['Ana', 'ana%40example', '91234']) assert.equal(page.url().includes(value), false);
+      const stored = await page.evaluate(() => localStorage.length + sessionStorage.length);
+      assert.equal(stored, 0);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('sem cookie (AF-10 item 5): a consulta de horários não envia o cookie de sessão do dono (critério 16)', async () => {
+    const context = await browser.newContext({ viewport: { width: 360, height: 800 } });
+    await context.addCookies([{ name: 'af_session', value: 'sessao-do-dono', url: customerServer.baseUrl }]);
+    const page = await context.newPage();
+    const seen = [];
+    page.on('request', (req) => seen.push(req));
+    try {
+      await page.goto(`${customerServer.baseUrl}/dados`, { waitUntil: 'load' });
+      await chooseInPage(page, { serviceId: customerServer.data.reference.services[0].id, date: FRIDAY });
+      await waitReady(page, 'sex, 27/11');
+      const documentRequest = seen.find((r) => r.resourceType() === 'document');
+      assert.match((await documentRequest.allHeaders()).cookie || '', /af_session=sessao-do-dono/, 'o cookie existe no contexto');
+      const api = seen.filter((r) => r.url().includes('/api/public/'));
+      assert.ok(api.length > 0);
+      for (const req of api) assert.equal((await req.allHeaders()).cookie, undefined, req.url());
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('XSS: o nome malicioso do negócio aparece literal no aviso de privacidade (critério 19)', async () => {
+    const { context, page, dialogs } = await openCustomerStep('/xss-dados');
+    try {
+      const privacy = await page.locator('#dados-privacidade').textContent();
+      assert.ok(privacy.includes(`Os dados são recebidos por ${SCRIPT_PAYLOAD}.`), privacy);
+      assert.equal(await page.evaluate(() => window.__x), undefined);
+      assert.equal(await page.locator('#dados-privacidade *').count(), 0);
+      assert.deepEqual(dialogs, []);
     } finally {
       await context.close();
     }

@@ -4,13 +4,18 @@ export const GENERIC_ERROR_MESSAGE = 'Não foi possível concluir agora. Verifiq
  * Wrapper de fetch JSON. Nunca lança: erros de rede (e a consulta abortada por `signal`) viram
  * { ok: false, status: 0 }.
  * @param {string} url
- * @param {{ method?: string, body?: unknown, fetchFn?: typeof fetch, signal?: AbortSignal }} [options]
+ * `credentials`: padrão `same-origin` (telas do dono, que dependem do cookie). O JS público
+ * (`web/js/public-*.js`) passa sempre `'omit'` (AF-10 item 5, AF-04 critério 16).
+ * @param {{ method?: string, body?: unknown, fetchFn?: typeof fetch, signal?: AbortSignal, credentials?: RequestCredentials }} [options]
  * @returns {Promise<{ ok: boolean, status: number, body: any, error: { code: string, message: string, fields?: Record<string,string> } | null }>}
  */
-export async function requestJson(url, { method = 'GET', body, fetchFn = globalThis.fetch, signal } = {}) {
+export async function requestJson(
+  url,
+  { method = 'GET', body, fetchFn = globalThis.fetch, signal, credentials = 'same-origin' } = {},
+) {
   let response;
   try {
-    const init = { method, credentials: 'same-origin', headers: { Accept: 'application/json' } };
+    const init = { method, credentials, headers: { Accept: 'application/json' } };
     if (signal) init.signal = signal;
     if (body !== undefined) {
       init.headers['Content-Type'] = 'application/json';
