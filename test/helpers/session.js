@@ -134,3 +134,18 @@ export function deleteTimeBlock(app, cookies, id, { headers = {} } = {}) {
 export async function setBusinessTimezone(app, businessId, timeZone) {
   await app.db.run('UPDATE businesses SET timezone = ? WHERE id = ?', [timeZone, businessId]);
 }
+
+/**
+ * `GET /api/public/:slug/availability` com a query dada (AF-10). Sem cookie por padrão.
+ * Devolve a resposta crua (sem checar status).
+ * @param {Record<string, string|string[]>} [query]
+ * @param {{ cookies?: object, remoteAddress?: string, headers?: object }} [options]
+ * @returns {Promise<import('light-my-request').Response>}
+ */
+export function getAvailability(app, slug, query = {}, { cookies, remoteAddress, headers } = {}) {
+  const options = { method: 'GET', url: `/api/public/${slug}/availability`, query };
+  if (cookies) options.cookies = cookies;
+  if (remoteAddress) options.remoteAddress = remoteAddress;
+  if (headers) options.headers = headers;
+  return app.inject(options);
+}

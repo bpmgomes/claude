@@ -27,7 +27,9 @@ main, .pp-header, .pp-footer {
 
 a { color: #1d4ed8; }
 
-a:focus-visible, button:focus-visible, [tabindex="-1"]:focus-visible {
+[hidden] { display: none !important; }
+
+a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible, [tabindex="-1"]:focus-visible {
   outline: 3px solid #1d4ed8;
   outline-offset: 2px;
 }
@@ -138,6 +140,7 @@ section h2 {
   overflow-wrap: anywhere;
 }
 
+/* "Ver horários" (AF-10): link com aparência de botão. */
 .pp-book {
   display: inline-flex;
   align-items: center;
@@ -149,9 +152,9 @@ section h2 {
   border-radius: 8px;
   font: inherit;
   font-weight: 600;
-  color: #374151;
-  background: #e5e7eb;
-  cursor: not-allowed;
+  color: #fff;
+  background: #1d4ed8;
+  text-decoration: none;
 }
 
 .pp-professional {
@@ -193,6 +196,107 @@ section h2 {
   display: inline-flex;
   align-items: center;
   min-height: 44px;
+}
+
+/* Horários disponíveis (AF-10). Nenhuma largura fixa acima de 320 px. */
+.pp-booking-fields {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pp-booking-fields label {
+  margin-top: 8px;
+  font-weight: 600;
+}
+
+.pp-booking-fields select, .pp-booking-fields input {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px solid #6b7280;
+  border-radius: 8px;
+  font: inherit;
+  color: #1f2937;
+  background: #fff;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pp-booking-fields option {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pp-timezone {
+  margin: 12px 0 4px;
+  color: #4b5563;
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+.pp-status {
+  margin: 4px 0 12px;
+  min-height: 1.5em;
+}
+
+.pp-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pp-slot {
+  width: 100%;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 8px;
+  border: 1px solid #1d4ed8;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  color: #1d4ed8;
+  background: #fff;
+  cursor: pointer;
+}
+
+.pp-slot[aria-pressed="true"] {
+  color: #fff;
+  background: #1d4ed8;
+}
+
+.pp-confirm { margin-top: 16px; }
+
+.pp-selected {
+  margin: 0 0 8px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pp-confirm-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+}
+
+.pp-confirm-button:disabled {
+  color: #374151;
+  background: #e5e7eb;
+  cursor: not-allowed;
 }
 
 .pp-message {

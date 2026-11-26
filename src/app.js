@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
 import { loadConfig, mergeConfig } from './config.js';
-import { errorHandler } from './http/errors.js';
+import { errorHandler, RateLimitedError } from './http/errors.js';
+import { createSecurityHeaders, SECURITY_HEADERS_PROBE_URL } from './http/security-headers.js';
 import { createDatabase } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
 import { createUsersRepository } from './modules/accounts/users.repository.js';
@@ -42,11 +43,36 @@ import publicPageRoutes, {
   sendRateLimitedPage,
   wantsHtmlNotFound,
 } from './modules/public-page/public-page.routes.js';
-import { publicKeyGenerator } from './http/route-guards.js';
+import { createSharedPublicLimiter } from './http/route-guards.js';
+import { createAvailabilityService } from './modules/availability/availability.service.js';
+import availabilityRoutes from './modules/availability/availability.routes.js';
 import { createImageLimiter } from './images/image-limiter.js';
 import { createStorage } from './storage/index.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+/** Rotas curinga dos arquivos estáticos (`web/` e `src/shared/`). */
+const STATIC_WILDCARD_URLS = Object.freeze(['/*', '/shared/*']);
+
+const FRAMEWORK_NOT_FOUND_CODES = Object.freeze(['FST_ERR_BAD_URL', 'FST_ERR_MAX_PARAM_LENGTH']);
+const RATE_LIMITED = new RateLimitedError(0);
+const INTERNAL_ERROR_BODY = Object.freeze({ error: { code: 'INTERNAL_ERROR', message: 'Erro inesperado. Tente novamente.' } });
+
+/**
+ * JSON dos erros de framework: os cabeçalhos do helmet já foram aplicados; aqui só o que é próprio
+ * de uma resposta de erro sem conteúdo ativo (CSP mais restrita, sem frame e sem cache).
+ */
+function sendFrameworkJson(reply, status, body) {
+  return reply
+    .status(status)
+    .header('Cache-Control', 'no-store')
+    .header('Content-Security-Policy', FRAMEWORK_ERROR_CSP)
+    .header('X-Frame-Options', 'DENY')
+    .send(body);
+}
+
+/** CSP do JSON 400 de `frameworkErrors` (resposta sem conteúdo ativo). */
+export const FRAMEWORK_ERROR_CSP = "default-src 'none'; frame-ancestors 'none'";
 
 export const REDACT_PATHS = [
   'req.headers.cookie',
@@ -93,12 +119,42 @@ export async function buildApp(overrides = {}) {
     trustProxy: config.trustProxy,
     // URL malformada (ex.: /%E0%A4%A) em GET/HEAD fora da API: o mesmo 404 HTML uniforme da
     // página pública, sem eco (AF-09, critério 21). Outros erros de framework: JSON 400 fixo.
+    // Este caminho não passa pelo helmet: os cabeçalhos dele vêm da captura do boot (AF-09 item 1).
     frameworkErrors: (error, request, reply) => {
-      const notFoundCodes = ['FST_ERR_BAD_URL', 'FST_ERR_MAX_PARAM_LENGTH'];
-      if (notFoundCodes.includes(error.code) && wantsHtmlNotFound(request)) return sendNotFoundPage(reply);
-      return reply.status(400).send({ error: { code: 'VALIDATION_ERROR', message: 'Requisição inválida.' } });
+      handleFrameworkError(error, request, reply).catch((err) => {
+        request.log.error({ event: 'framework_error_failed', err });
+        if (!reply.sent) reply.status(500).header('Cache-Control', 'no-store').send(INTERNAL_ERROR_BODY);
+      });
     },
   });
+
+  /**
+   * Erros de framework (antes do roteamento): cabeçalhos do helmet, contador barato por IP (o 404
+   * HTML usa o contador compartilhado das rotas públicas, como o 404 de fallback; o JSON 400 usa o
+   * bucket `malformedUrl`) e corpo fixo sem eco.
+   */
+  async function handleFrameworkError(error, request, reply) {
+    securityHeaders.apply(reply);
+    const html = FRAMEWORK_NOT_FOUND_CODES.includes(error.code) && wantsHtmlNotFound(request);
+    const limiter = html ? publicReadLimiter : malformedUrlLimiter;
+    if (limiter) {
+      try {
+        await limiter(request, reply);
+      } catch (err) {
+        if (!err || err.statusCode !== 429) throw err;
+        if (html) return sendRateLimitedPage(reply);
+        return sendFrameworkJson(reply, 429, { error: { code: RATE_LIMITED.code, message: RATE_LIMITED.message } });
+      }
+    }
+    if (html) return sendNotFoundPage(reply);
+    return sendFrameworkJson(reply, 400, { error: { code: 'VALIDATION_ERROR', message: 'Requisição inválida.' } });
+  }
+
+  // Preenchidos depois do registro do @fastify/rate-limit (null sem rate limit).
+  let publicReadLimiter = null;
+  let malformedUrlLimiter = null;
+  const securityHeaders = createSecurityHeaders();
+  app.decorate('securityHeaders', securityHeaders);
   app.decorate('config', config);
   // A API só aceita JSON: o Fastify 5 traz parser de text/plain por padrão, e
   // removê-lo faz qualquer outro content-type responder 415 (mitigação de CSRF, R5).
@@ -173,6 +229,17 @@ export async function buildApp(overrides = {}) {
     servicesRepository,
     professionalsRepository,
     config,
+    now,
+  });
+  // Sem `appointments`: usa a porta nula (noAppointments, findBusyByBusiness vazio) até o AF-11.
+  const availabilityService = createAvailabilityService({
+    businessesRepository,
+    servicesRepository,
+    professionalsRepository,
+    workingHoursRepository,
+    timeBlocksRepository,
+    now,
+    log: app.log,
   });
   const authService = createAuthService({
     db,
@@ -204,6 +271,7 @@ export async function buildApp(overrides = {}) {
     timeBlocksRepository,
     timeBlocksService,
     publicPageService,
+    availabilityService,
     imageLimiter,
   });
 
@@ -233,22 +301,25 @@ export async function buildApp(overrides = {}) {
   if (config.rateLimit.enabled) {
     await app.register(rateLimit, { global: false });
   }
+  // Contador por IP COMPARTILHADO entre as rotas públicas de leitura do negócio (AF-09 item 3, AF-10
+  // critério 25): `/:slug`, `/:slug/`, o 404 HTML de fallback e o endpoint de horários. null sem rate limit.
+  publicReadLimiter = createSharedPublicLimiter(app, config, 'publicPage');
+  app.decorate('publicReadLimiter', publicReadLimiter);
+  // Contador barato por IP para o JSON 400 de URL malformada (AF-09 item 1).
+  malformedUrlLimiter = createSharedPublicLimiter(app, config, 'malformedUrl');
 
   // 404 fora das rotas (AF-09, 4.1): GET/HEAD fora de /api/, /media/ e /shared/ recebem o 404
   // HTML uniforme (slug acima do maxParamLength, arquivo estático inexistente); o resto, o JSON
-  // NOT_FOUND. Com rate limit ligado, contador próprio com o bucket publicPage (o 404 conta).
+  // NOT_FOUND. Com rate limit ligado, só o 404 HTML consome o contador compartilhado (AF-09 item 2):
+  // /api/*, /media/*, /shared/* e outros métodos não contam.
   const notFoundOptions = {};
-  if (config.rateLimit.enabled) {
-    const limit = app.rateLimit({
-      max: config.rateLimit.publicPage.perIp,
-      timeWindow: config.rateLimit.timeWindow,
-      keyGenerator: publicKeyGenerator,
-    });
+  if (publicReadLimiter) {
     notFoundOptions.preHandler = async (request, reply) => {
+      if (!wantsHtmlNotFound(request)) return;
       try {
-        await limit(request, reply);
+        await publicReadLimiter(request, reply);
       } catch (err) {
-        if (err && err.statusCode === 429 && wantsHtmlNotFound(request)) return sendRateLimitedPage(reply);
+        if (err && err.statusCode === 429) return sendRateLimitedPage(reply);
         throw err;
       }
     };
@@ -259,6 +330,15 @@ export async function buildApp(overrides = {}) {
   });
   await app.register(authPlugin);
 
+  // Os wildcards do @fastify/static (`/*` e `/shared/*`) servem só arquivos públicos e também
+  // encaminham o 404 de fallback (callNotFound) de todo GET/HEAD sem rota: marcados como
+  // `publicRoute`, não leem nem renovam a sessão do dono (AF-09 item 4; o `is404` só cobre o
+  // que não casou nenhuma rota).
+  app.addHook('onRoute', (routeOptions) => {
+    if (STATIC_WILDCARD_URLS.includes(routeOptions.url)) {
+      routeOptions.config = { ...(routeOptions.config || {}), publicRoute: true };
+    }
+  });
   await app.register(fastifyStatic, { root: join(ROOT, 'web'), prefix: '/', index: false });
   await app.register(fastifyStatic, {
     root: join(ROOT, 'src', 'shared'),
@@ -278,9 +358,14 @@ export async function buildApp(overrides = {}) {
   await app.register(professionalsRoutes);
   await app.register(workingHoursRoutes);
   await app.register(timeBlocksRoutes);
+  // Antes de publicPageRoutes (rota estática /api/public/... tem prioridade sobre `/:slug`).
+  await app.register(availabilityRoutes);
   // Por último: `/:slug` só casa o que nenhuma rota estática casou.
   await app.register(publicPageRoutes);
 
   await app.ready();
+  // Fonte única dos cabeçalhos do helmet para os erros de framework: captura do próprio helmet.
+  const probe = await app.inject({ method: 'GET', url: SECURITY_HEADERS_PROBE_URL });
+  securityHeaders.capture(probe.headers);
   return app;
 }

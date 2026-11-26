@@ -1,9 +1,21 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderPublicPage, PUBLIC_PAGE_CSP, NOT_FOUND_HTML } from '../../src/modules/public-page/public-page.render.js';
+import {
+  renderPublicPage,
+  PUBLIC_PAGE_CSP,
+  NOT_FOUND_HTML,
+  RATE_LIMITED_HTML,
+  ERROR_HTML,
+  PUBLIC_BOOKING_MODULES,
+  PUBLIC_BOOKING_ENTRY,
+} from '../../src/modules/public-page/public-page.render.js';
 import { tagsOf, tagNamesOf, textOf } from '../helpers/html.js';
 
 const XSS = ['<script>alert(1)</script>', '"><img src=x onerror=alert(1)>'];
+const CORTE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001';
+const BARBA_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002';
+const ANA_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001';
+const BIA_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-000000000002';
 
 function page({ name = 'Salão da Ana', address = 'Rua A, 10', serviceName = 'Corte', professionalName = 'Ana', logo = true, photo = false, hasOffer = true } = {}) {
   const logoUrl = logo ? '/media/logos/33333333-3333-4333-8333-333333333333.png' : null;
@@ -18,20 +30,23 @@ function page({ name = 'Salão da Ana', address = 'Rua A, 10', serviceName = 'Co
     },
     services: hasOffer
       ? [
-          { name: serviceName, durationLabel: '30 min', priceLabel: 'R$ 50,00', professionalNames: [professionalName] },
-          { name: 'Barba', durationLabel: '1 h 30 min', priceLabel: 'Sob consulta', professionalNames: [professionalName, 'Bia'] },
+          { id: CORTE_ID, name: serviceName, durationMinutes: 30, durationLabel: '30 min', priceLabel: 'R$ 50,00', professionalNames: [professionalName] },
+          { id: BARBA_ID, name: 'Barba', durationMinutes: 90, durationLabel: '1 h 30 min', priceLabel: 'Sob consulta', professionalNames: [professionalName, 'Bia'] },
         ]
       : [],
     professionals: hasOffer
       ? [
           {
+            id: ANA_ID,
             name: professionalName,
             photoUrl: photo ? '/media/professionals/44444444-4444-4444-8444-444444444444.png' : null,
+            serviceIds: [CORTE_ID, BARBA_ID],
             serviceNames: [serviceName, 'Barba'],
           },
-          { name: 'Bia', photoUrl: null, serviceNames: ['Barba'] },
+          { id: BIA_ID, name: 'Bia', photoUrl: null, serviceIds: [BARBA_ID], serviceNames: ['Barba'] },
         ]
       : [],
+    booking: { timezone: 'America/Sao_Paulo', today: '2026-11-26', maxDate: '2027-02-24' },
     hasOffer,
     canonicalUrl: 'https://agendafacil.app/salao-da-ana',
     ogImageUrl: logoUrl ? `https://agendafacil.app${logoUrl}` : null,
@@ -61,15 +76,35 @@ describe('documento (critério 16)', () => {
     assert.equal(metaContent(html, 'property', 'og:image'), undefined);
   });
 
-  test('sem script, sem style= e sem on*= (CSP sem unsafe-inline)', () => {
-    for (const html of [renderPublicPage(page()), renderPublicPage(page({ hasOffer: false })), NOT_FOUND_HTML.toString()]) {
-      assert.equal(tagNamesOf(html).includes('script'), false);
+  test('sem style= e sem on*=; só o módulo de horários como script (CSP sem unsafe-inline)', () => {
+    const pages = [renderPublicPage(page()), renderPublicPage(page({ hasOffer: false }))];
+    for (const html of [...pages, NOT_FOUND_HTML.toString(), RATE_LIMITED_HTML.toString(), ERROR_HTML.toString()]) {
       assert.equal(tagNamesOf(html).includes('style'), false);
       assert.doesNotMatch(html, /\sstyle=/);
       assert.doesNotMatch(html, /\son[a-z]+=/i);
     }
-    assert.doesNotMatch(PUBLIC_PAGE_CSP, /unsafe-inline/);
+    // Com oferta: uma tag <script>, módulo com src, sem conteúdo inline.
+    const scripts = tagsOf(pages[0], 'script');
+    assert.equal(scripts.length, 1);
+    assert.deepEqual(scripts[0], { type: 'module', src: PUBLIC_BOOKING_ENTRY });
+    assert.match(pages[0], /<script type="module" src="\/js\/public-booking-page\.js"><\/script>/);
+    // Sem oferta e páginas fixas: nenhum script.
+    for (const html of [pages[1], NOT_FOUND_HTML.toString(), RATE_LIMITED_HTML.toString(), ERROR_HTML.toString()]) {
+      assert.equal(tagNamesOf(html).includes('script'), false);
+    }
+    assert.doesNotMatch(PUBLIC_PAGE_CSP, /unsafe-inline|unsafe-eval/);
+    assert.match(PUBLIC_PAGE_CSP, /script-src 'self'/);
+    assert.match(PUBLIC_PAGE_CSP, /connect-src 'self'/);
     assert.match(PUBLIC_PAGE_CSP, /frame-ancestors 'none'/);
+  });
+
+  test('um modulepreload por módulo do grafo, antes do script', () => {
+    const html = renderPublicPage(page());
+    const preloads = tagsOf(html, 'link').filter((l) => l.rel === 'modulepreload').map((l) => l.href);
+    assert.deepEqual(preloads, [...PUBLIC_BOOKING_MODULES]);
+    assert.equal(new Set(preloads).size, preloads.length);
+    assert.ok(html.indexOf('rel="modulepreload"') < html.indexOf('<script'));
+    assert.ok(Object.isFrozen(PUBLIC_BOOKING_MODULES));
   });
 });
 
@@ -81,6 +116,11 @@ describe('XSS (critério 18)', () => {
       );
       const clean = renderPublicPage(page({ photo: true }));
       assert.deepEqual(tagNamesOf(html), tagNamesOf(clean));
+      assert.equal(tagsOf(html, 'script').length, 1);
+      assert.equal(tagsOf(html, 'option').length, tagsOf(clean, 'option').length);
+      // Dentro de <option> e de data-*, o nome continua literal.
+      assert.ok(html.includes(`>${escapeForTest(payload)} · 30 min</option>`));
+      assert.ok(html.includes(`value="${ANA_ID}" data-services="${CORTE_ID} ${BARBA_ID}">${escapeForTest(payload)}</option>`));
       assert.equal(tagsOf(html, 'img').length, tagsOf(clean, 'img').length);
       for (const name of new Set(tagNamesOf(html))) {
         for (const attrs of tagsOf(html, name)) {
@@ -124,17 +164,64 @@ describe('imagens (critérios 2 e 11)', () => {
 });
 
 describe('ação de agendar e estado vazio (critérios 7, 8 e 15)', () => {
-  test('cada serviço tem botão Agendar desabilitado ligado ao aviso', () => {
+  test('cada serviço tem o link Ver horários para a seção #agendar (AF-10)', () => {
     const html = renderPublicPage(page());
-    const buttons = tagsOf(html, 'button');
-    assert.equal(buttons.length, 2);
-    for (const b of buttons) {
-      assert.equal('disabled' in b, true);
-      assert.equal(b['aria-describedby'], 'agendar-aviso');
-    }
-    assert.match(html, /id="agendar-aviso">Agendamento online em breve/);
+    const links = tagsOf(html, 'a').filter((a) => a.class === 'pp-book');
+    assert.deepEqual(
+      links.map((a) => [a.href, a['data-service-id']]),
+      [
+        [`?servico=${CORTE_ID}#agendar`, CORTE_ID],
+        [`?servico=${BARBA_ID}#agendar`, BARBA_ID],
+      ],
+    );
+    assert.equal((html.match(/>Ver horários<\/a>/g) || []).length, 2);
+    assert.match(html, /id="agendar-aviso">Veja os horários livres abaixo\. A confirmação online chega em breve; por enquanto, ligue para \(11\) 91234-5678\./);
     assert.ok(tagsOf(html, 'a').some((a) => a.class === 'skip-link' && a.href === '#servicos'));
     assert.ok(tagsOf(html, 'section').some((s) => s.id === 'servicos'));
+  });
+
+  test('seção de horários: hidden, data-* do servidor, campos e noscript (critérios 22 e 28)', () => {
+    const html = renderPublicPage(page());
+    const [section] = tagsOf(html, 'section').filter((s) => s.class === 'pp-booking');
+    assert.ok(section);
+    assert.equal('hidden' in section, true);
+    assert.equal(section['data-slug'], 'salao-da-ana');
+    assert.equal(section['data-today'], '2026-11-26');
+    assert.equal(section['data-max-date'], '2027-02-24');
+    assert.equal(section['data-timezone'], 'America/Sao_Paulo');
+    assert.equal(tagsOf(html, 'div').filter((d) => d.id === 'agendar').length, 1);
+    assert.equal(tagsOf(html, 'form').length, 0);
+    assert.match(html, /<noscript><p class="pp-notice">Para ver os horários livres, ative o JavaScript ou ligue para <a href="tel:\+5511912345678">\(11\) 91234-5678<\/a>\.<\/p><\/noscript>/);
+
+    const options = tagsOf(html, 'option');
+    assert.deepEqual(
+      options.map((o) => o.value),
+      ['', CORTE_ID, BARBA_ID, 'any', ANA_ID, BIA_ID],
+    );
+    assert.equal(options[1]['data-duration'], '30');
+    assert.equal(options[2]['data-duration'], '90');
+    assert.equal(options[4]['data-services'], `${CORTE_ID} ${BARBA_ID}`);
+    assert.equal(options[5]['data-services'], BARBA_ID);
+    assert.ok(html.includes('>Corte · 30 min</option>'));
+    assert.ok(html.includes('>Qualquer profissional</option>'));
+    const [date] = tagsOf(html, 'input');
+    assert.deepEqual(date, { id: 'bk-date', type: 'date', min: '2026-11-26', max: '2027-02-24', value: '2026-11-26' });
+    assert.ok(textOf(html).includes('Horários no fuso America/Sao_Paulo.'));
+    for (const id of ['bk-service', 'bk-professional', 'bk-date']) {
+      assert.ok(tagsOf(html, 'label').some((l) => l.for === id), id);
+    }
+  });
+
+  test('Confirmar agendamento desabilitado, com aviso de que o horário não está reservado (critério 22)', () => {
+    const html = renderPublicPage(page());
+    const buttons = tagsOf(html, 'button');
+    assert.equal(buttons.length, 1);
+    assert.equal(buttons[0].class, 'pp-confirm-button');
+    assert.equal('disabled' in buttons[0], true);
+    assert.equal(buttons[0]['aria-describedby'], 'confirmar-aviso');
+    assert.match(html, />Confirmar agendamento<\/button>/);
+    assert.match(html, /id="confirmar-aviso" class="pp-notice">A confirmação online chega em breve\. Este horário ainda não está reservado: para garantir, ligue para \(11\) 91234-5678\./);
+    assert.ok(tagsOf(html, 'div').some((d) => d.class === 'pp-confirm' && 'hidden' in d));
   });
 
   test('estado vazio: texto explicativo e link tel:', () => {
@@ -144,6 +231,7 @@ describe('ação de agendar e estado vazio (critérios 7, 8 e 15)', () => {
     assert.ok(text.includes('Este negócio ainda não tem serviços disponíveis para agendar pela internet.'));
     assert.ok(tagsOf(html, 'a').some((a) => a.href === 'tel:+5511912345678' && a.class === 'pp-empty-phone'));
     assert.equal(tagsOf(html, 'button').length, 0);
+    assert.equal(tagsOf(html, 'section').some((s) => s.class === 'pp-booking'), false);
     assert.ok(tagsOf(html, 'section').some((s) => s.id === 'servicos'));
   });
 
@@ -163,3 +251,9 @@ describe('404 constante (critérios 6 e 21)', () => {
     assert.notEqual(NOT_FOUND_HTML, other.NOT_FOUND_HTML);
   });
 });
+
+/** Mesmo escape da tag `html` (para procurar o texto no HTML gerado). */
+function escapeForTest(text) {
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;' };
+  return text.replace(/[&<>"'`]/g, (c) => map[c]);
+}

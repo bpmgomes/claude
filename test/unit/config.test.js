@@ -69,6 +69,21 @@ describe('loadConfig', () => {
     assert.deepEqual(merged.rateLimit.publicMedia, { perIp: 600 });
   });
 
+  test('padrão do AF-10: teto de custo publicAvailability só por IP, sem alterar publicPage', () => {
+    const c = loadConfig({});
+    assert.deepEqual(c.rateLimit.publicAvailability, { perIp: 30 });
+    assert.deepEqual(c.rateLimit.publicPage, { perIp: 120 });
+    assert.ok(c.rateLimit.publicAvailability.perIp < c.rateLimit.publicPage.perIp);
+    assert.equal(Object.isFrozen(c.rateLimit.publicAvailability), true);
+    const merged = mergeConfig(c, { rateLimit: { publicAvailability: { perIp: 2 } } });
+    assert.deepEqual(merged.rateLimit.publicAvailability, { perIp: 2 });
+    assert.deepEqual(merged.rateLimit.publicPage, { perIp: 120 });
+  });
+
+  test('padrão do contador de URL malformada (AF-09 item 1): malformedUrl só por IP', () => {
+    assert.deepEqual(loadConfig({}).rateLimit.malformedUrl, { perIp: 120 });
+  });
+
   test('padrões do AF-02 (critério 22)', () => {
     const c = loadConfig({});
     assert.equal(c.trustProxy, false);

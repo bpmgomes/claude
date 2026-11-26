@@ -23,6 +23,10 @@
  *                 items: Array<{ id: string, startsAt: string, endsAt: string, serviceName: string,
  *                                professionalId: string, professionalName: string, customerName: string }>,
  *                 versionKey: string }>,
+ *   findBusyByBusiness(businessId: string,
+ *                      filter: { professionalId: string|null },
+ *                      fromIso: string, toIso: string)
+ *     : Promise<Map<string, Array<{ startsAt: string, endsAt: string }>>>,
  * }} AppointmentsPort
  *
  * countFutureByProfessional roda DENTRO da transação de remoção: deve usar só `conn`, nunca o
@@ -40,6 +44,15 @@ FIND_WEEKLY_IDS_MAX ids, e convertida no fuso do negócio).
  * (ou de todos os ativos, se professionalId for null). `items` vem ordenado por starts_at, id, com
  * até `limit` itens; `total` é o total real. `versionKey` é opaco e muda sempre que o CONJUNTO muda
  * (sugestão para o AF-11: sha256 dos ids ordenados, ou COUNT + MAX(updated_at)).
+ *
+ * findBusyByBusiness (AF-10, design 4.3) alimenta o cálculo de horários disponíveis. Ocupado = NÃO
+ * cancelado E starts_at < toIso E ends_at > fromIso (intersecção semiaberta), de profissional ativo
+ * (JOIN professionals removed_at IS NULL). `filter.professionalId` null = todos os ativos do negócio.
+ * Uma consulta por business_id, sem IN (...) (critério 23), com o índice
+ * appointments(business_id, starts_at) do AF-11. Instantes UTC ISO de 24 caracteres, como
+ * time_blocks. Chamado FORA de transação, com o `db` global; período de até 32 dias. Profissional
+ * sem ocupado não aparece no Map: use `map.get(id) ?? []`. Se lançar, a disponibilidade responde
+ * 503 AVAILABILITY_UNAVAILABLE (nunca lista otimista).
  */
 
 /** Implementação nula até o AF-11: nunca há agendamentos. @type {AppointmentsPort} */
@@ -48,4 +61,5 @@ export const noAppointments = Object.freeze({
   countFutureByProfessional: async () => 0,
   countFutureOutsideHours: async () => 0,
   findConflictsForBlock: async () => ({ total: 0, items: [], versionKey: '' }),
+  findBusyByBusiness: async () => new Map(),
 });

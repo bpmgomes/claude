@@ -1,13 +1,17 @@
 export const GENERIC_ERROR_MESSAGE = 'Não foi possível concluir agora. Verifique sua conexão e tente novamente.';
 
 /**
- * Wrapper de fetch JSON. Nunca lança: erros de rede viram { ok: false, status: 0 }.
+ * Wrapper de fetch JSON. Nunca lança: erros de rede (e a consulta abortada por `signal`) viram
+ * { ok: false, status: 0 }.
+ * @param {string} url
+ * @param {{ method?: string, body?: unknown, fetchFn?: typeof fetch, signal?: AbortSignal }} [options]
  * @returns {Promise<{ ok: boolean, status: number, body: any, error: { code: string, message: string, fields?: Record<string,string> } | null }>}
  */
-export async function requestJson(url, { method = 'GET', body, fetchFn = globalThis.fetch } = {}) {
+export async function requestJson(url, { method = 'GET', body, fetchFn = globalThis.fetch, signal } = {}) {
   let response;
   try {
     const init = { method, credentials: 'same-origin', headers: { Accept: 'application/json' } };
+    if (signal) init.signal = signal;
     if (body !== undefined) {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);

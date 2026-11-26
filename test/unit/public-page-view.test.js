@@ -2,7 +2,9 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { toPublicPage, PUBLIC_PAGE_FIELDS } from '../../src/modules/public-page/public-page.view.js';
 
-const BASE = { publicBaseUrl: 'https://agendafacil.app' };
+// 2026-11-26T12:00Z = 09:00 em São Paulo (quinta-feira).
+const NOW_MS = Date.parse('2026-11-26T12:00:00.000Z');
+const BASE = { publicBaseUrl: 'https://agendafacil.app', nowMs: NOW_MS };
 const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
 const OWNER_ID = '22222222-2222-4222-8222-222222222222';
 const LOGO_UUID = '33333333-3333-4333-8333-333333333333';
@@ -57,10 +59,11 @@ function professional(name, services, extra = {}) {
   };
 }
 
-/** Compara as chaves de todos os níveis com a lista permitida. */
+/** Compara as chaves de todos os níveis com a lista permitida (recursivo). */
 function assertAllowedKeys(page) {
   assert.deepEqual(Object.keys(page).sort(), [...PUBLIC_PAGE_FIELDS.page].sort());
   assert.deepEqual(Object.keys(page.business).sort(), [...PUBLIC_PAGE_FIELDS.business].sort());
+  assert.deepEqual(Object.keys(page.booking).sort(), [...PUBLIC_PAGE_FIELDS.booking].sort());
   for (const s of page.services) assert.deepEqual(Object.keys(s).sort(), [...PUBLIC_PAGE_FIELDS.service].sort());
   for (const p of page.professionals) {
     assert.deepEqual(Object.keys(p).sort(), [...PUBLIC_PAGE_FIELDS.professional].sort());
@@ -76,12 +79,26 @@ describe('lista permitida (critério 17)', () => {
     assert.equal(page.services.length, 1);
     assert.equal(page.professionals.length, 1);
     const json = JSON.stringify(page);
-    for (const secret of [BUSINESS_ID, OWNER_ID, corte.id, ana.id, CREATED, UPDATED, corte.nameKey, ana.nameKey]) {
+    for (const secret of [BUSINESS_ID, OWNER_ID, CREATED, UPDATED, corte.nameKey, ana.nameKey]) {
       assert.equal(json.includes(secret), false, secret);
     }
+    // AF-10: só os ids de serviço e profissional, a duração e os serviços de cada profissional.
+    assert.equal(page.services[0].id, corte.id);
+    assert.equal(page.services[0].durationMinutes, 30);
+    assert.equal(page.professionals[0].id, ana.id);
+    assert.deepEqual(page.professionals[0].serviceIds, [corte.id]);
     assert.equal(/"logos\//.test(json), false);
     assert.equal(/"professionals\//.test(json), false);
     assert.equal(page.professionals[0].photoUrl, '/media/professionals/44444444-4444-4444-8444-444444444444.png');
+  });
+
+  test('serviceIds só traz serviços visíveis (desativado e oculto ficam de fora)', () => {
+    const corte = service('Corte');
+    const off = service('Luzes', { active: false });
+    const ana = professional('Ana', [corte, off]);
+    const page = toPublicPage({ business: business(), services: [corte, off], professionals: [ana] }, BASE);
+    assert.deepEqual(page.professionals[0].serviceIds, [corte.id]);
+    assert.equal(JSON.stringify(page).includes(off.id), false);
   });
 
   test('PUBLIC_PAGE_FIELDS é congelado', () => {
@@ -195,5 +212,27 @@ describe('contato, OG e descrição (critério 16)', () => {
     page = toPublicPage({ business: business({ name: 'N'.repeat(100) }), services: [], professionals: [] }, BASE);
     assert.ok(page.description.includes('N'.repeat(100)));
     assert.ok(page.description.length <= 168, String(page.description.length));
+  });
+});
+
+describe('booking: hoje e horizonte no fuso do negócio (AF-10, critérios 18 e 28)', () => {
+  test('today e maxDate (hoje + 90) calculados de nowMs no fuso do negócio', () => {
+    const page = toPublicPage({ business: business(), services: [], professionals: [] }, BASE);
+    assert.deepEqual(page.booking, { timezone: 'America/Sao_Paulo', today: '2026-11-26', maxDate: '2027-02-24' });
+  });
+
+  test('23:30 em São Paulo (02:30Z do dia seguinte) continua today local', () => {
+    const nowMs = Date.parse('2026-11-27T02:30:00.000Z');
+    const page = toPublicPage({ business: business(), services: [], professionals: [] }, { ...BASE, nowMs });
+    assert.equal(page.booking.today, '2026-11-26');
+  });
+
+  test('outro fuso do negócio muda a data, não o fuso do processo', () => {
+    const nowMs = Date.parse('2026-11-26T16:00:00.000Z'); // 01:00 do dia 27 em Tóquio
+    const page = toPublicPage(
+      { business: business({ timezone: 'Asia/Tokyo' }), services: [], professionals: [] },
+      { ...BASE, nowMs },
+    );
+    assert.deepEqual(page.booking, { timezone: 'Asia/Tokyo', today: '2026-11-27', maxDate: '2027-02-25' });
   });
 });

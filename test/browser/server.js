@@ -7,13 +7,20 @@ import { createMemoryStorage } from '../../src/storage/memory.js';
 
 /**
  * Sobe o app com banco em diretório temporário, storage em memória, cookie sem Secure e rate
- * limit LIGADO com os padrões. `seed(app)` roda antes do listen (via inject).
+ * limit LIGADO com os padrões. `seed(app)` roda antes do listen (via inject). Com `now` (ISO),
+ * o relógio do servidor fica fixo nesse instante (horários do E2E e do perf determinísticos, AF-10).
  * @template T
- * @param {{ seed?: (app: import('fastify').FastifyInstance) => Promise<T>, overrides?: object }} [options]
+ * @param {{ seed?: (app: import('fastify').FastifyInstance) => Promise<T>, now?: string, overrides?: object }} [options]
  * @returns {Promise<{ app: import('fastify').FastifyInstance, baseUrl: string, data: T, close: () => Promise<void> }>}
  */
-export async function startServer({ seed, overrides = {} } = {}) {
+export async function startServer({ seed, now, overrides = {} } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'agendafacil-browser-'));
+  const clock = {};
+  if (now) {
+    const fixed = Date.parse(now);
+    if (!Number.isFinite(fixed)) throw new Error(`now inválido: ${now}`);
+    clock.now = () => new Date(fixed);
+  }
   const app = await buildApp({
     databasePath: join(dir, 'db.sqlite'),
     storage: createMemoryStorage(),
@@ -21,6 +28,7 @@ export async function startServer({ seed, overrides = {} } = {}) {
     bcryptCost: 4,
     logLevel: 'warn',
     publicBaseUrl: 'http://127.0.0.1',
+    ...clock,
     ...overrides,
   });
   let data;

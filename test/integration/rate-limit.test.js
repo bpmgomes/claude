@@ -66,6 +66,8 @@ function businessLimits({
   timeBlockWrite,
   timeBlockRead,
   publicPage,
+  publicAvailability,
+  malformedUrl,
   publicMedia,
 } = {}) {
   return {
@@ -80,6 +82,8 @@ function businessLimits({
     timeBlockWrite: timeBlockWrite || { perUser: 100, perIp: 100 },
     timeBlockRead: timeBlockRead || { perUser: 100, perIp: 100 },
     publicPage: publicPage || { perIp: 100 },
+    publicAvailability: publicAvailability || { perIp: 100 },
+    malformedUrl: malformedUrl || { perIp: 100 },
     publicMedia: publicMedia || { perIp: 100 },
   };
 }
@@ -595,31 +599,164 @@ test('404 também consome o limite: 2 slugs inexistentes e o 3º GET do slug vá
   }
 });
 
-test('rotas independentes: /:slug no limite não barra /media; /:slug/ e o 404 de fallback têm contador próprio (critério 19)', async () => {
+test('/:slug no limite não barra /media (contador próprio por rota de mídia)', async () => {
   const { app, seed } = await publicApp({ publicPage: { perIp: 2 } });
   try {
     for (let i = 0; i < 3; i++) await visit(app, `/${seed.slug}`);
     assert.equal((await visit(app, `/${seed.slug}`)).statusCode, 429);
     assert.equal((await visit(app, seed.business.logoUrl)).statusCode, 200);
     assert.equal((await visit(app, seed.professionals[0].photoUrl)).statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
 
-    // /:slug/ tem contador próprio.
-    const slash = [];
-    for (let i = 0; i < 3; i++) slash.push((await visit(app, `/${seed.slug}/`)).statusCode);
-    assert.deepEqual(slash, [301, 301, 429]);
+// ---------------------------------------------------------------------------
+// AF-10 (critério 25) e AF-09 itens 2 e 3: um contador por IP compartilhado entre /:slug, /:slug/,
+// o 404 HTML de fallback e o endpoint de horários, mais o teto de custo `publicAvailability`.
+// ---------------------------------------------------------------------------
 
-    // 404 de fallback (slug acima de 100 caracteres não casa /:slug): contador próprio.
-    const long = `/${'a'.repeat(101)}`;
-    const fallback = [];
-    let last;
-    for (let i = 0; i < 3; i++) {
-      last = await visit(app, long);
-      fallback.push(last.statusCode);
+const { getAvailability } = await import('../helpers/session.js');
+
+function availabilityQuery(seed) {
+  return { serviceId: seed.services[0].id, professionalId: 'any', from: '2026-11-27' };
+}
+
+async function availabilityApp(limits) {
+  const clock = createClockForAvailability();
+  const { app } = await buildTestApp({ now: clock.now, rateLimit: businessLimits(limits) });
+  const seed = await seedPublicBusiness(app, { services: 1, professionals: 1, logo: null, photos: false });
+  return { app, seed };
+}
+
+function createClockForAvailability() {
+  const at = Date.parse('2026-11-26T12:00:00.000Z');
+  return { now: () => new Date(at) };
+}
+
+function assertRateLimitedJson(res) {
+  assert.equal(res.statusCode, 429);
+  assert.equal(res.json().error.code, 'RATE_LIMITED');
+  assert.ok(Number(res.headers['retry-after']) >= 1);
+  assert.equal(res.headers['cache-control'], 'no-store');
+  assert.equal(res.headers['x-content-type-options'], 'nosniff');
+  assert.ok(res.headers['content-security-policy']);
+  assert.ok(res.headers['x-frame-options']);
+  assert.equal(res.headers['set-cookie'], undefined);
+}
+
+for (const [label, last] of [
+  ['GET /<slug>', (app, seed) => visit(app, `/${seed.slug}`)],
+  ['GET /<slug>/', (app, seed) => visit(app, `/${seed.slug}/`)],
+  ['GET /api/public/<slug>/availability', (app, seed) => getAvailability(app, seed.slug, availabilityQuery(seed), { remoteAddress: '10.1.1.1' })],
+  ['404 HTML de fallback', (app) => visit(app, `/${'a'.repeat(101)}`)],
+]) {
+  test(`publicPage.perIp 3 compartilhado: página, barra final e horários consomem o mesmo contador; a 4ª (${label}) dá 429`, async () => {
+    const { app, seed } = await availabilityApp({ publicPage: { perIp: 3 } });
+    try {
+      assert.equal((await visit(app, `/${seed.slug}`)).statusCode, 200);
+      assert.equal((await visit(app, `/${seed.slug}/`)).statusCode, 301);
+      const ok = await getAvailability(app, seed.slug, availabilityQuery(seed), { remoteAddress: '10.1.1.1' });
+      assert.equal(ok.statusCode, 200, ok.body);
+      const res = await last(app, seed);
+      if (label.startsWith('GET /api')) assertRateLimitedJson(res);
+      else assertRateLimitedHtml(res);
+      // Outro IP passa em todas.
+      assert.equal((await visit(app, `/${seed.slug}`, '10.1.1.2')).statusCode, 200);
+      assert.equal(
+        (await getAvailability(app, seed.slug, availabilityQuery(seed), { remoteAddress: '10.1.1.2' })).statusCode,
+        200,
+      );
+    } finally {
+      await app.close();
     }
-    assert.deepEqual(fallback, [404, 404, 429]);
-    assertRateLimitedHtml(last);
-    // Em outro IP o fallback continua com o 404 uniforme.
-    assert.ok((await visit(app, long, '10.9.9.9')).rawPayload.equals(NOT_FOUND_HTML));
+  });
+}
+
+test('404 HTML conta no contador compartilhado e /api/* não (AF-09 item 2)', async () => {
+  const { app, seed } = await availabilityApp({ publicPage: { perIp: 3 } });
+  try {
+    for (let i = 0; i < 10; i++) {
+      const res = await visit(app, '/api/nao-existe');
+      assert.equal(res.statusCode, 404);
+      assert.equal(res.json().error.code, 'NOT_FOUND');
+    }
+    for (let i = 0; i < 5; i++) {
+      assert.equal((await app.inject({ method: 'POST', url: '/nao-existe', remoteAddress: '10.1.1.1', payload: {} })).statusCode, 404);
+      assert.equal((await visit(app, '/media/logos/00000000-0000-4000-8000-000000000000.png')).statusCode, 404);
+      assert.equal((await visit(app, '/shared/nao-existe.js')).statusCode, 404);
+    }
+    assert.equal((await visit(app, '/nao-existe-1')).statusCode, 404);
+    assert.equal((await visit(app, `/${'b'.repeat(101)}`)).statusCode, 404);
+    assert.equal((await visit(app, `/${seed.slug}`)).statusCode, 200);
+    assertRateLimitedHtml(await visit(app, '/nao-existe-2'));
+  } finally {
+    await app.close();
+  }
+});
+
+test('publicAvailability.perIp 2: a 3ª consulta dá 429 JSON e a página continua 200 (teto de custo)', async () => {
+  const { app, seed } = await availabilityApp({ publicPage: { perIp: 100 }, publicAvailability: { perIp: 2 } });
+  try {
+    const query = availabilityQuery(seed);
+    const first = await getAvailability(app, seed.slug, query, { remoteAddress: '10.1.1.1' });
+    assert.equal(first.statusCode, 200);
+    // O teto não sobrescreve os cabeçalhos do contador compartilhado.
+    assert.equal(first.headers['x-ratelimit-limit'], '100');
+    assert.equal(first.headers['x-ratelimit-remaining'], '99');
+    assert.equal((await getAvailability(app, seed.slug, query, { remoteAddress: '10.1.1.1' })).statusCode, 200);
+    assertRateLimitedJson(await getAvailability(app, seed.slug, query, { remoteAddress: '10.1.1.1' }));
+    assert.equal((await visit(app, `/${seed.slug}`)).statusCode, 200);
+    assert.equal((await getAvailability(app, seed.slug, query, { remoteAddress: '10.1.1.2' })).statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test('consulta inválida (400 e 404) também consome os dois contadores', async () => {
+  const { app, seed } = await availabilityApp({ publicPage: { perIp: 100 }, publicAvailability: { perIp: 2 } });
+  try {
+    assert.equal((await getAvailability(app, seed.slug, {}, { remoteAddress: '10.1.1.1' })).statusCode, 400);
+    assert.equal((await getAvailability(app, 'nao-existe', availabilityQuery(seed), { remoteAddress: '10.1.1.1' })).statusCode, 404);
+    assertRateLimitedJson(await getAvailability(app, seed.slug, availabilityQuery(seed), { remoteAddress: '10.1.1.1' }));
+  } finally {
+    await app.close();
+  }
+});
+
+test('URL malformada (AF-09 item 1): JSON 400 com contador malformedUrl; 404 HTML no contador compartilhado', async () => {
+  const { app, seed } = await availabilityApp({ publicPage: { perIp: 3 }, malformedUrl: { perIp: 2 } });
+  try {
+    const bad = (url, remoteAddress = '10.1.1.1') => app.inject({ method: 'GET', url, remoteAddress });
+    assert.equal((await bad('/api/%E0%A4%A')).statusCode, 400);
+    assert.equal((await bad('/api/public/%E0%A4%A/availability')).statusCode, 400);
+    const limited = await bad('/api/%E0%A4%A');
+    assertRateLimitedJson(limited);
+    assert.equal(limited.headers['content-security-policy'], "default-src 'none'; frame-ancestors 'none'");
+    assert.ok(limited.headers['strict-transport-security']);
+    assert.ok(limited.headers['cross-origin-resource-policy']);
+    assert.equal((await bad('/api/%E0%A4%A', '10.1.1.2')).statusCode, 400);
+    // O JSON malformado não consome o contador compartilhado da página.
+    assert.equal((await visit(app, `/${seed.slug}`)).statusCode, 200);
+
+    // O 404 HTML de URL malformada conta junto com a página (é o 404 de fallback).
+    assert.equal((await bad('/%E0%A4%A')).statusCode, 404);
+    assert.equal((await visit(app, `/${seed.slug}`)).statusCode, 200);
+    const html = await bad('/%E0%A4%A');
+    assertRateLimitedHtml(html);
+    assert.ok(html.headers['strict-transport-security']);
+  } finally {
+    await app.close();
+  }
+});
+
+test('IPv6: o mesmo /64 divide o contador compartilhado entre página e horários', async () => {
+  const { app, seed } = await availabilityApp({ publicPage: { perIp: 2 } });
+  try {
+    assert.equal((await visit(app, `/${seed.slug}`, '2001:db8::1')).statusCode, 200);
+    assert.equal((await getAvailability(app, seed.slug, availabilityQuery(seed), { remoteAddress: '2001:db8::2' })).statusCode, 200);
+    assertRateLimitedJson(await getAvailability(app, seed.slug, availabilityQuery(seed), { remoteAddress: '2001:db8::ffff:3' }));
+    assert.equal((await visit(app, `/${seed.slug}`, '2001:db8:0:1::1')).statusCode, 200);
   } finally {
     await app.close();
   }

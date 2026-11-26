@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createPublicRouteGuards } from '../../http/route-guards.js';
+import { sharedPublicGuards } from '../../http/route-guards.js';
 import { NotFoundError } from '../../http/errors.js';
 import { parsePublicSlug } from '../../shared/slug.js';
 import {
@@ -97,13 +97,13 @@ function publicErrorHandler(error, request, reply) {
  * PAGES têm prioridade no find-my-way e estão todas em RESERVED_SLUGS.
  */
 export default async function publicPageRoutes(app) {
-  const { config } = app;
   const service = () => app.services.publicPageService;
 
-  // Guards próprios por rota (createPublicRouteGuards chamado uma vez por rota).
+  // Contador por IP compartilhado com o 404 HTML de fallback e o endpoint de horários (AF-09
+  // item 3, AF-10 critério 25). sharedPublicGuards devolve objetos novos a cada chamada.
   app.get(
     '/:slug',
-    { ...createPublicRouteGuards(config, 'publicPage'), errorHandler: publicErrorHandler },
+    { ...sharedPublicGuards(app.publicReadLimiter), errorHandler: publicErrorHandler },
     async (request, reply) => {
       const parsed = parsePublicSlug(request.params.slug);
       if (parsed.kind === 'invalid') return sendNotFoundPage(reply);
@@ -124,7 +124,7 @@ export default async function publicPageRoutes(app) {
 
   app.get(
     '/:slug/',
-    { ...createPublicRouteGuards(config, 'publicPage'), errorHandler: publicErrorHandler },
+    { ...sharedPublicGuards(app.publicReadLimiter), errorHandler: publicErrorHandler },
     async (request, reply) => {
       const parsed = parsePublicSlug(request.params.slug);
       if (parsed.kind === 'invalid') return sendNotFoundPage(reply);

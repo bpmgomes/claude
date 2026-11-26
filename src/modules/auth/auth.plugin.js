@@ -36,6 +36,8 @@ async function authPlugin(app) {
   app.addHook('onRequest', async (request) => {
     // Rotas públicas (AF-09, critério 22): a sessão do dono não é lida nem tocada.
     if (request.routeOptions?.config?.publicRoute === true) return;
+    // Nenhum 404 precisa do usuário: o fallback (HTML ou JSON) não lê nem renova a sessão (AF-09 item 4).
+    if (request.is404 === true) return;
     const token = request.cookies?.[SESSION_COOKIE];
     if (!token) return;
     const { sessionsService, usersRepository } = app.services;

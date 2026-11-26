@@ -9,9 +9,16 @@ import { toPublicPage } from './public-page.view.js';
  *   servicesRepository: ReturnType<typeof import('../services/services.repository.js').createServicesRepository>,
  *   professionalsRepository: ReturnType<typeof import('../professionals/professionals.repository.js').createProfessionalsRepository>,
  *   config: { publicBaseUrl: string },
+ *   now?: () => Date,   // relógio do servidor: `booking.today` e `booking.maxDate` (AF-10)
  * }} deps
  */
-export function createPublicPageService({ businessesRepository, servicesRepository, professionalsRepository, config }) {
+export function createPublicPageService({
+  businessesRepository,
+  servicesRepository,
+  professionalsRepository,
+  config,
+  now = () => new Date(),
+}) {
   return {
     /**
      * @param {string} slug já canônico (parsePublicSlug deu `ok`)
@@ -25,7 +32,10 @@ export function createPublicPageService({ businessesRepository, servicesReposito
         servicesRepository.findActiveByBusinessId(business.id),
         professionalsRepository.findListedByBusinessId(business.id),
       ]);
-      return toPublicPage({ business, services, professionals }, { publicBaseUrl: config.publicBaseUrl });
+      return toPublicPage(
+        { business, services, professionals },
+        { publicBaseUrl: config.publicBaseUrl, nowMs: now().getTime() },
+      );
     },
   };
 }

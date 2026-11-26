@@ -1,6 +1,12 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { createRouteGuards, createPublicRouteGuards, authOnly } from '../../src/http/route-guards.js';
+import {
+  createRouteGuards,
+  createPublicRouteGuards,
+  authOnly,
+  createSharedPublicLimiter,
+  sharedPublicGuards,
+} from '../../src/http/route-guards.js';
 import { rateLimitKey } from '../../src/http/ip-key.js';
 import { requireAuth } from '../../src/modules/auth/auth.plugin.js';
 
@@ -96,5 +102,79 @@ describe('createPublicRouteGuards (AF-09, critério 19)', () => {
 
   test('bucket desconhecido lança', () => {
     assert.throws(() => createPublicRouteGuards(PUBLIC, 'naoExiste'), /Bucket/);
+  });
+});
+
+describe('createSharedPublicLimiter e sharedPublicGuards (AF-10, critério 25; AF-09 item 3)', () => {
+  const SHARED = { rateLimit: { enabled: true, timeWindow: '1 minute', publicPage: { perIp: 2 } } };
+
+  /** App falso: guarda as opções de createRateLimit e simula o contador. */
+  function fakeApp() {
+    const calls = [];
+    return {
+      calls,
+      createRateLimit(options) {
+        calls.push(options);
+        let count = 0;
+        return async (request) => {
+          count += 1;
+          return { isAllowed: false, isExceeded: count > options.max, max: options.max, remaining: Math.max(0, options.max - count), ttlInSeconds: 42, key: options.keyGenerator(request) };
+        };
+      },
+    };
+  }
+
+  function fakeReply() {
+    const headers = {};
+    return { headers, header(name, value) { headers[name.toLowerCase()] = String(value); return this; } };
+  }
+
+  test('sem rate limit devolve null e não cria contador', () => {
+    const app = fakeApp();
+    assert.equal(createSharedPublicLimiter(app, { rateLimit: { ...SHARED.rateLimit, enabled: false } }, 'publicPage'), null);
+    assert.equal(app.calls.length, 0);
+  });
+
+  test('um contador por chamada, com perIp, timeWindow e keyGenerator /64', () => {
+    const app = fakeApp();
+    createSharedPublicLimiter(app, SHARED, 'publicPage');
+    assert.equal(app.calls.length, 1);
+    assert.equal(app.calls[0].max, 2);
+    assert.equal(app.calls[0].timeWindow, '1 minute');
+    assert.equal(app.calls[0].keyGenerator({ ip: '2001:db8::1' }), rateLimitKey('2001:db8::1'));
+  });
+
+  test('o mesmo hook conta todas as chamadas; acima do limite lança 429 com Retry-After', async () => {
+    const limiter = createSharedPublicLimiter(fakeApp(), SHARED, 'publicPage');
+    const replies = [fakeReply(), fakeReply(), fakeReply()];
+    await limiter({ ip: '10.0.0.1' }, replies[0]);
+    await limiter({ ip: '10.0.0.1' }, replies[1]);
+    await assert.rejects(limiter({ ip: '10.0.0.1' }, replies[2]), (err) => err.statusCode === 429);
+    assert.equal(replies[0].headers['x-ratelimit-remaining'], '1');
+    assert.equal(replies[2].headers['retry-after'], '42');
+    assert.equal(replies[2].headers['x-ratelimit-remaining'], '0');
+  });
+
+  test('addHeaders: false não define x-ratelimit-*, mas o 429 mantém Retry-After', async () => {
+    const limiter = createSharedPublicLimiter(fakeApp(), { rateLimit: { ...SHARED.rateLimit, publicPage: { perIp: 0 } } }, 'publicPage', { addHeaders: false });
+    const reply = fakeReply();
+    await assert.rejects(limiter({ ip: '10.0.0.1' }, reply), (err) => err.statusCode === 429);
+    assert.deepEqual(reply.headers, { 'retry-after': '42' });
+  });
+
+  test('bucket desconhecido lança', () => {
+    assert.throws(() => createSharedPublicLimiter(fakeApp(), SHARED, 'naoExiste'), /Bucket/);
+  });
+
+  test('sharedPublicGuards: publicRoute, arrays novos a cada chamada e nulos ignorados', () => {
+    const a = async () => {};
+    const b = async () => {};
+    const first = sharedPublicGuards(a, null, b);
+    const second = sharedPublicGuards(a, null, b);
+    assert.deepEqual(first, { onRequest: [a, b], config: { publicRoute: true } });
+    assert.notEqual(first.onRequest, second.onRequest);
+    assert.notEqual(first.config, second.config);
+    assert.deepEqual(sharedPublicGuards(null), { onRequest: [], config: { publicRoute: true } });
+    assert.equal(Object.isFrozen(first.onRequest), false);
   });
 });

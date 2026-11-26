@@ -122,7 +122,7 @@ Critérios de aceite
 - Funciona bem em telas a partir de 360 px de largura.
 
 ### AF-10 · Cálculo de horários disponíveis
-Tipo: História · Prioridade: Alta · Pontos: 8 · Status: TODO
+Tipo: História · Prioridade: Alta · Pontos: 8 · Status: DONE
 
 Como cliente final, quero ver apenas horários realmente livres para o serviço e profissional escolhidos.
 

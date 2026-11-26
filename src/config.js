@@ -27,9 +27,15 @@
  *   POST e DELETE com contadores próprios).
  * - `rateLimit.timeBlockRead` (60/120 por minuto: listar bloqueios, `GET /api/time-blocks`). É a
  *   única leitura do dono com limite por usuário (AF-16, critério 22).
- * - `rateLimit.publicPage` (`{ perIp: 120 }` por minuto: `/:slug`, `/:slug/` e o 404 de fallback) e
- *   `rateLimit.publicMedia` (`{ perIp: 600 }` por minuto: `/media/logos/:file` e
- *   `/media/professionals/:file`): rotas anônimas, só por IP (IPv6 agrupado no /64), POR ROTA.
+ * - `rateLimit.publicPage` (`{ perIp: 120 }` por minuto): UM contador por IP compartilhado entre as
+ *   rotas públicas de leitura do negócio (`/:slug`, `/:slug/`, o 404 HTML de fallback e
+ *   `GET /api/public/:slug/availability`), sem multiplicar o limite por rota (AF-10, critério 25).
+ * - `rateLimit.publicAvailability` (`{ perIp: 30 }` por minuto): teto de custo ADICIONAL, só para o
+ *   endpoint de horários. Cada consulta consome os dois contadores.
+ * - `rateLimit.malformedUrl` (`{ perIp: 120 }` por minuto): contador barato por IP do JSON 400 de URL
+ *   malformada (`frameworkErrors`, AF-09 item 1). O 404 HTML de URL malformada usa `publicPage`.
+ * - `rateLimit.publicMedia` (`{ perIp: 600 }` por minuto: `/media/logos/:file` e
+ *   `/media/professionals/:file`): POR ROTA. Rotas anônimas, só por IP (IPv6 agrupado no /64).
  * - `imageProcessing` (`{ concurrency: 2, queueMax: 4, queueTimeoutMs: 10000 }`): limite de
  *   processamentos de imagem simultâneos, dividido entre logo e foto (src/images/image-limiter.js);
  *   acima da fila, 503 IMAGE_BUSY.
@@ -75,6 +81,8 @@ export function loadConfig(env = process.env) {
       timeBlockWrite: { perUser: 30, perIp: 60 },
       timeBlockRead: { perUser: 60, perIp: 120 },
       publicPage: { perIp: 120 },
+      publicAvailability: { perIp: 30 },
+      malformedUrl: { perIp: 120 },
       publicMedia: { perIp: 600 },
     },
     imageProcessing: {

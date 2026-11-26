@@ -6,7 +6,13 @@ import { seedPublicBusiness } from '../helpers/public-fixture.js';
 import { signupAndLogin, createBusinessFor, createService, createProfessional, putHours, WEEK_9_TO_18 } from '../helpers/session.js';
 import { pngOf } from '../helpers/images.js';
 import { tagsOf, tagNamesOf, textOf } from '../helpers/html.js';
-import { PUBLIC_PAGE_CSP, NOT_FOUND_HTML, ERROR_HTML } from '../../src/modules/public-page/public-page.render.js';
+import {
+  PUBLIC_PAGE_CSP,
+  NOT_FOUND_HTML,
+  ERROR_HTML,
+  PUBLIC_BOOKING_MODULES,
+  PUBLIC_BOOKING_ENTRY,
+} from '../../src/modules/public-page/public-page.render.js';
 
 const get = (app, url, options = {}) => app.inject({ method: 'GET', url, ...options });
 
@@ -53,13 +59,19 @@ describe('página de referência (critérios 1, 2, 10, 16, 17, 22, 23)', () => {
     await app.close();
   });
 
-  test('sem cookie: 200 text/html com os 20 serviços e os 10 profissionais no HTML inicial, sem script', async () => {
+  test('sem cookie: 200 text/html com os 20 serviços e os 10 profissionais no HTML inicial, só o módulo como script', async () => {
     const res = await get(app, `/${seed.slug}`);
     assert.equal(res.statusCode, 200);
     assert.equal(res.headers['content-type'], 'text/html; charset=utf-8');
     assert.equal(tagsOf(res.body, 'li').filter((li) => li.class === 'pp-service').length, 20);
     assert.equal(tagsOf(res.body, 'li').filter((li) => li.class === 'pp-professional').length, 10);
-    assert.equal(tagNamesOf(res.body).includes('script'), false);
+    // AF-10: um único <script type="module" src>, sem script inline, e um modulepreload por módulo.
+    assert.deepEqual(tagsOf(res.body, 'script'), [{ type: 'module', src: PUBLIC_BOOKING_ENTRY }]);
+    assert.match(res.body, /<script type="module" src="\/js\/public-booking-page\.js"><\/script>/);
+    assert.deepEqual(
+      tagsOf(res.body, 'link').filter((l) => l.rel === 'modulepreload').map((l) => l.href),
+      [...PUBLIC_BOOKING_MODULES],
+    );
     assert.doesNotMatch(res.body, /fetch\(|\/api\//);
     const text = textOf(res.body);
     for (const s of seed.services) assert.ok(text.includes(s.name), s.name);
@@ -116,14 +128,44 @@ describe('página de referência (critérios 1, 2, 10, 16, 17, 22, 23)', () => {
     const res = await get(app, `/${seed.slug}`);
     const me = (await get(app, '/api/me', { cookies: seed.cookies })).json().user;
     const forbidden = [me.email, me.id, seed.business.id, seed.business.createdAt, seed.business.updatedAt];
-    for (const s of seed.services) forbidden.push(s.id, s.createdAt);
-    for (const p of seed.professionals) forbidden.push(p.id, p.createdAt, p.updatedAt);
+    for (const s of seed.services) forbidden.push(s.createdAt);
+    for (const p of seed.professionals) forbidden.push(p.createdAt, p.updatedAt);
     for (const value of forbidden) assert.equal(res.body.includes(value), false, value);
     for (const word of ['created_at', 'updated_at', 'name_key', 'nameKey', 'removed', 'owner']) {
       assert.equal(res.body.includes(word), false, word);
     }
     // Chave de storage só aparece como parte de /media/.
     assert.equal(/(?<!\/media\/)(logos|professionals)\/[0-9a-f-]{36}/.test(res.body), false);
+    // AF-10: os UUIDs de serviço e profissional aparecem só nos atributos da escolha de horário.
+    const allowed = new Set([...seed.services.map((s) => s.id), ...seed.professionals.map((p) => p.id)]);
+    for (const uuid of res.body.match(/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/g) || []) {
+      assert.ok(allowed.has(uuid) || res.body.includes(`/media/logos/${uuid}`) || res.body.includes(`/media/professionals/${uuid}`), uuid);
+    }
+  });
+
+  test('seção #agendar com os UUIDs de serviço e profissional nas opções (AF-10, critério 28)', async () => {
+    const res = await get(app, `/${seed.slug}`);
+    const options = tagsOf(res.body, 'option');
+    const serviceValues = options.filter((o) => o['data-duration']).map((o) => o.value);
+    assert.deepEqual(new Set(serviceValues), new Set(seed.services.map((s) => s.id)));
+    const professionalOptions = options.filter((o) => 'data-services' in o);
+    assert.deepEqual(new Set(professionalOptions.map((o) => o.value)), new Set(seed.professionals.map((p) => p.id)));
+    for (const o of professionalOptions) {
+      const professional = seed.professionals.find((p) => p.id === o.value);
+      assert.deepEqual(new Set(o['data-services'].split(' ')), new Set(professional.services.map((x) => x.id)));
+    }
+    assert.ok(options.some((o) => o.value === 'any'));
+    const [section] = tagsOf(res.body, 'section').filter((x) => x.class === 'pp-booking');
+    assert.equal(section['data-slug'], seed.slug);
+    assert.equal(section['data-timezone'], 'America/Sao_Paulo');
+  });
+
+  test('os módulos do grafo são servidos como JavaScript (modulepreload)', async () => {
+    for (const url of PUBLIC_BOOKING_MODULES) {
+      const res = await get(app, url);
+      assert.equal(res.statusCode, 200, url);
+      assert.match(res.headers['content-type'], /javascript/, url);
+    }
   });
 
   test('com cookie de sessão válido: corpo idêntico, sem set-cookie (critério 22)', async () => {
@@ -203,6 +245,49 @@ describe('página de referência (critérios 1, 2, 10, 16, 17, 22, 23)', () => {
     const res = await get(app, '/api/nao-existe');
     assert.equal(res.statusCode, 404);
     assert.equal(res.json().error.code, 'NOT_FOUND');
+  });
+
+  test('AF-09 item 1: erros de framework trazem o mesmo conjunto de cabeçalhos do helmet de um 404 normal', async () => {
+    const TRANSPORT = new Set(['connection', 'content-length', 'date', 'keep-alive']);
+    const names = (res) => Object.keys(res.headers).filter((h) => !TRANSPORT.has(h)).sort();
+    const helmetOnly = ['strict-transport-security', 'cross-origin-resource-policy', 'cross-origin-opener-policy', 'referrer-policy',
+      'origin-agent-cluster', 'x-dns-prefetch-control', 'x-download-options', 'x-permitted-cross-domain-policies', 'x-xss-protection'];
+
+    const jsonReference = await get(app, '/api/nada');
+    const htmlReference = await get(app, '/nada', { headers: { accept: 'text/html' } });
+    for (const name of helmetOnly) assert.ok(jsonReference.headers[name], `referência sem ${name}`);
+
+    // JSON 400: o conjunto do 404 da API mais o no-store.
+    for (const url of ['/api/public/%E0%A4%A/availability', '/api/%E0%A4%A']) {
+      const res = await get(app, url);
+      assert.equal(res.statusCode, 400, url);
+      assert.deepEqual(names(res), [...names(jsonReference), 'cache-control'].sort(), url);
+      for (const name of helmetOnly) assert.equal(res.headers[name], jsonReference.headers[name], `${url}: ${name}`);
+    }
+    // 404 HTML: exatamente o conjunto (e os valores) de um 404 HTML normal.
+    for (const url of ['/%E0%A4%A', '/%E0%A4%A/']) {
+      const res = await get(app, url, { headers: { accept: 'text/html' } });
+      assert.equal(res.statusCode, 404, url);
+      assert.deepEqual(names(res), names(htmlReference), url);
+      for (const name of names(htmlReference)) assert.equal(res.headers[name], htmlReference.headers[name], `${url}: ${name}`);
+    }
+    // Fonte única: o que foi capturado do helmet no boot é o que o 404 normal traz.
+    const captured = app.securityHeaders.get();
+    for (const [name, value] of Object.entries(captured)) assert.equal(jsonReference.headers[name], value, name);
+    assert.ok(Object.isFrozen(captured));
+  });
+
+  test('AF-09 item 1: URL malformada na API dá JSON 400 com nosniff, no-store, CSP e X-Frame-Options', async () => {
+    for (const url of ['/api/%E0%A4%A', '/media/%E0%A4%A']) {
+      const res = await get(app, url);
+      assert.equal(res.statusCode, 400, url);
+      assert.deepEqual(res.json(), { error: { code: 'VALIDATION_ERROR', message: 'Requisição inválida.' } });
+      assert.equal(res.headers['x-content-type-options'], 'nosniff');
+      assert.equal(res.headers['cache-control'], 'no-store');
+      assert.equal(res.headers['content-security-policy'], "default-src 'none'; frame-ancestors 'none'");
+      assert.equal(res.headers['x-frame-options'], 'DENY');
+      assert.equal(res.body.includes('%E0'), false);
+    }
   });
 });
 
@@ -366,6 +451,35 @@ describe('visibilidade e mudanças do dono (critérios 3 a 5, 7, 23, 24)', () =>
     // Controle: uma rota do dono toca a sessão.
     await get(app, '/api/me', { cookies: ana });
     assert.notDeepEqual(await app.db.get('SELECT last_seen_at FROM sessions'), before);
+  });
+
+  test('AF-09 item 4: o 404 de fallback (HTML e JSON) não lê nem renova a sessão do dono', async () => {
+    const before = await app.db.get('SELECT last_seen_at FROM sessions');
+    clock.advance(5 * 60 * 1000);
+    for (const url of ['/inexistente', `/${'a'.repeat(101)}`, '/api/nao-existe', '/css/nao-existe.css']) {
+      const res = await get(app, url, { cookies: ana });
+      assert.equal(res.statusCode, 404, url);
+      assert.equal(res.headers['set-cookie'], undefined, url);
+    }
+    assert.deepEqual(await app.db.get('SELECT last_seen_at FROM sessions'), before);
+    // Controle: uma rota do dono toca a sessão.
+    await get(app, '/api/me', { cookies: ana });
+    assert.notDeepEqual(await app.db.get('SELECT last_seen_at FROM sessions'), before);
+  });
+
+  test('data-today e data-max-date no fuso do negócio, pelo relógio do servidor (AF-10)', async () => {
+    const corte = await createService(app, ana, { name: 'Corte' });
+    await bookable('Ana', [corte.id]);
+    let [section] = tagsOf((await page()).body, 'section').filter((x) => x.class === 'pp-booking');
+    assert.equal(section['data-today'], '2026-03-01');
+    assert.equal(section['data-max-date'], '2026-05-30');
+    // 23:30 em São Paulo (02:30Z do dia seguinte) continua no dia local.
+    clock.advance((14 * 60 + 30) * 60 * 1000);
+    [section] = tagsOf((await page()).body, 'section').filter((x) => x.class === 'pp-booking');
+    assert.equal(section['data-today'], '2026-03-01');
+    const [date] = tagsOf((await page()).body, 'input').filter((i) => i.id === 'bk-date');
+    assert.equal(date.min, '2026-03-01');
+    assert.equal(date.max, '2026-05-30');
   });
 
   test('slug antigo depois da troca: 404 uniforme; o novo dá 200 (critério 24)', async () => {
