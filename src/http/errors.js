@@ -127,10 +127,13 @@ export class AppointmentNotChangeableError extends ConflictError {
   }
 }
 
-/** A `version` enviada não é a do agendamento atual do link (409). */
+/**
+ * A `version` enviada não é a do agendamento atual (409). `message`: a variante fixa do chamador
+ * (o AF-12 usa a padrão; a agenda do dono, AF-14, passa `AGENDA_MESSAGES.changed`).
+ */
 export class AppointmentChangedError extends ConflictError {
-  constructor() {
-    super('APPOINTMENT_CHANGED', MANAGE_MESSAGES.changed);
+  constructor(message = MANAGE_MESSAGES.changed) {
+    super('APPOINTMENT_CHANGED', message);
     this.name = 'AppointmentChangedError';
   }
 }

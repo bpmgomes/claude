@@ -1,10 +1,20 @@
 // Regras fixas da fila de e-mails (AF-18, design 4.2). Módulo puro, só servidor. Nada aqui é
 // configuração: atrasos, tetos, prazos e timeouts são constantes (decisão do design 2.1).
 
-export const EMAIL_KINDS = Object.freeze(['appointment_confirmed', 'appointment_cancelled', 'appointment_rescheduled']);
 export const EMAIL_KIND_CONFIRMED = 'appointment_confirmed';
 export const EMAIL_KIND_CANCELLED = 'appointment_cancelled';
 export const EMAIL_KIND_RESCHEDULED = 'appointment_rescheduled';
+/** Cancelamento pelo dono (AF-14, critério 25; CHECK ampliado na migração 014). */
+export const EMAIL_KIND_CANCELLED_BY_OWNER = 'appointment_cancelled_by_owner';
+/** = CHECK `email_outbox_kind_check` vigente (014; teste). */
+export const EMAIL_KINDS = Object.freeze([
+  EMAIL_KIND_CONFIRMED,
+  EMAIL_KIND_CANCELLED,
+  EMAIL_KIND_RESCHEDULED,
+  EMAIL_KIND_CANCELLED_BY_OWNER,
+]);
+/** Tipos de cancelamento: relê `cancelled` no envio, não emite token, `.ics` CANCEL (AF-14). */
+export const EMAIL_CANCELLATION_KINDS = Object.freeze([EMAIL_KIND_CANCELLED, EMAIL_KIND_CANCELLED_BY_OWNER]);
 export const EMAIL_STATUSES = Object.freeze(['pending', 'sending', 'sent', 'failed', 'skipped', 'expired']);
 export const EMAIL_TERMINAL_STATUSES = Object.freeze(['sent', 'failed', 'skipped', 'expired']);
 

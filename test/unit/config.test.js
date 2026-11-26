@@ -67,6 +67,15 @@ describe('loadConfig', () => {
     assert.deepEqual(c.imageProcessing, { concurrency: 2, queueMax: 4, queueTimeoutMs: 10000 });
   });
 
+  test('padrões do AF-14: agendaRead (60/120) e agendaCancel (30/60), buckets separados', () => {
+    const c = loadConfig({});
+    assert.deepEqual(c.rateLimit.agendaRead, { perUser: 60, perIp: 120 });
+    assert.deepEqual(c.rateLimit.agendaCancel, { perUser: 30, perIp: 60 });
+    const merged = mergeConfig(c, { rateLimit: { agendaCancel: { perUser: 1, perIp: 2 } } });
+    assert.deepEqual(merged.rateLimit.agendaCancel, { perUser: 1, perIp: 2 });
+    assert.deepEqual(merged.rateLimit.agendaRead, { perUser: 60, perIp: 120 });
+  });
+
   test('padrões do AF-09: publicPage e publicMedia só por IP', () => {
     const c = loadConfig({});
     assert.deepEqual(c.rateLimit.publicPage, { perIp: 120 });

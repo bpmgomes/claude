@@ -164,7 +164,7 @@ Como cliente final, quero adicionar o agendamento ao Google Calendar ou baixar u
 ## E4 — Gestão da agenda (dono)
 
 ### AF-14 · Visão de agenda diária e semanal
-Tipo: História · Prioridade: Alta · Pontos: 8 · Status: TODO
+Tipo: História · Prioridade: Alta · Pontos: 8 · Status: DONE
 
 Como dono, quero ver os agendamentos do dia/semana por profissional.
 

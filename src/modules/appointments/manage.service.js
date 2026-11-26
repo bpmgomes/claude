@@ -12,6 +12,8 @@ import {
   RESCHEDULES_PER_CHAIN_MAX,
   APPOINTMENT_STATUS_CONFIRMED,
   APPOINTMENT_STATUS_CANCELLED,
+  CANCELLED_BY_CUSTOMER,
+  CANCELLED_BY_RESCHEDULE,
 } from '../../shared/appointments.js';
 import {
   NotFoundError,
@@ -279,7 +281,9 @@ export function createManageService({
             refused(business.id, 'deadline');
             throw new AppointmentNotChangeableError();
           }
-          const { changes } = await appointmentsRepository.cancelIfConfirmed(row.id, business.id, nowIso, tx);
+          const { changes } = await appointmentsRepository.cancelIfConfirmed(row.id, business.id, nowIso, tx, {
+            cancelledBy: CANCELLED_BY_CUSTOMER,
+          });
           if (changes !== 1) {
             // PostgreSQL: o segundo de dois cancelamentos simultâneos espera o primeiro e vê 0 linhas.
             const again = await resolve(token, nowIso, tx);
@@ -390,8 +394,10 @@ export function createManageService({
             refused(business.id, translated.message === MM.professionalUnavailable ? 'professional' : 'service');
             throw translated;
           }
-          // 9. Cancela o antigo (decisão 1), exigindo changes === 1 (critério 21).
-          const { changes } = await appointmentsRepository.cancelIfConfirmed(row.id, business.id, nowIso, tx);
+          // 9. Cancela o antigo (decisão 1), exigindo changes === 1 (critério 21). Origem `reschedule` (AF-14).
+          const { changes } = await appointmentsRepository.cancelIfConfirmed(row.id, business.id, nowIso, tx, {
+            cancelledBy: CANCELLED_BY_RESCHEDULE,
+          });
           if (changes !== 1) {
             refused(business.id, 'status');
             throw new AppointmentNotChangeableError();

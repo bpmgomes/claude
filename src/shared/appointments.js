@@ -8,6 +8,10 @@ import { SERVICE_ID_RE, formatDuration } from './services.js';
 export const APPOINTMENT_STATUSES = Object.freeze(['confirmed', 'cancelled', 'completed', 'no_show']);
 export const APPOINTMENT_STATUS_CONFIRMED = 'confirmed';
 export const APPOINTMENT_STATUS_CANCELLED = 'cancelled';
+/** Origem do cancelamento (`appointments.cancelled_by`, migração 014, AF-14 critério 11). */
+export const CANCELLED_BY_CUSTOMER = 'customer';
+export const CANCELLED_BY_OWNER = 'owner';
+export const CANCELLED_BY_RESCHEDULE = 'reschedule';
 /** Sugestões no 409 (decisão 6). */
 export const BOOKING_SUGGESTIONS_MAX = 3;
 /** Dias locais procurados pelas sugestões, contando o dia de `start` (decisão 6). */

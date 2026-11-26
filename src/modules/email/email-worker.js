@@ -5,7 +5,7 @@
 // com teto rígido de tempo. Logs só com `event`, id da linha, `kind`, tentativa e `errCode`/`errName`:
 // nunca endereço, nome, assunto, corpo, link, token, `businessId`, `appointmentId` nem resposta SMTP.
 import {
-  EMAIL_KIND_CANCELLED,
+  EMAIL_CANCELLATION_KINDS,
   EMAIL_KIND_RESCHEDULED,
   EMAIL_MAX_SENDS,
   EMAIL_LEASE_MS,
@@ -160,7 +160,8 @@ export function createEmailWorker(deps) {
         row.kind === EMAIL_KIND_RESCHEDULED ? await appointmentsRepository.findById(row.previousAppointmentId, businessId, tx) : null;
       if (!business || !appointment || (row.kind === EMAIL_KIND_RESCHEDULED && !previous)) return skip('missing');
       // Reavaliação (critério 10): nada de e-mail com estado velho.
-      if (row.kind === EMAIL_KIND_CANCELLED) {
+      const cancellation = EMAIL_CANCELLATION_KINDS.includes(row.kind);
+      if (cancellation) {
         if (appointment.status !== APPOINTMENT_STATUS_CANCELLED) return skip('not_cancelled');
       } else if (appointment.status !== APPOINTMENT_STATUS_CONFIRMED) return skip('not_confirmed');
       if (appointment.endsAt <= nowIso) return skip('ended');
@@ -183,9 +184,9 @@ export function createEmailWorker(deps) {
         if (!before) break;
         rootAppointmentId = before;
       }
-      // Token novo no envio (critério 11); o cancelamento não emite.
+      // Token novo no envio (critério 11); o cancelamento (pelo link ou pelo dono, AF-14) não emite.
       const token =
-        row.kind === EMAIL_KIND_CANCELLED
+        cancellation
           ? null
           : await tokenIssuer.issue(tx, {
               businessId,

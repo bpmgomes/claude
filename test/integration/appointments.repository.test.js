@@ -74,7 +74,7 @@ describe('migração 010 (critérios 8, 9 e 45)', () => {
     assert.deepEqual(cols, [
       'id', 'business_id', 'professional_id', 'customer_id', 'service_id', 'service_name', 'duration_minutes',
       'price_cents', 'customer_name', 'customer_phone', 'starts_at', 'ends_at', 'status', 'created_at',
-      'updated_at', 'cancelled_at',
+      'updated_at', 'cancelled_at', 'cancelled_by',
     ]);
     const keys = (await app.db.all('PRAGMA table_info(booking_idempotency_keys)')).map((c) => c.name);
     assert.deepEqual(keys, ['business_id', 'idempotency_key', 'request_hash', 'appointment_id', 'response_body', 'created_at', 'expires_at']);

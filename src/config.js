@@ -29,6 +29,10 @@ import { randomBytes } from 'node:crypto';
  *   POST e DELETE com contadores próprios).
  * - `rateLimit.timeBlockRead` (60/120 por minuto: listar bloqueios, `GET /api/time-blocks`). É a
  *   única leitura do dono com limite por usuário (AF-16, critério 22).
+ * - `rateLimit.agendaRead` (60/120 por minuto: `GET /api/agenda` e `GET /api/agenda/appointments/:id`,
+ *   POR ROTA, cada uma com contadores próprios; AF-14, critério 15).
+ * - `rateLimit.agendaCancel` (30/60 por minuto: `POST /api/agenda/appointments/:id/cancel`, POR ROTA;
+ *   não consome nem é consumido pelo `agendaRead`; AF-14, critério 29).
  * - `rateLimit.publicPage` (`{ perIp: 120 }` por minuto): UM contador por IP compartilhado entre as
  *   rotas públicas de leitura do negócio (`/:slug`, `/:slug/`, o 404 HTML de fallback e
  *   `GET /api/public/:slug/availability`), sem multiplicar o limite por rota (AF-10, critério 25).
@@ -107,6 +111,8 @@ export function loadConfig(env = process.env) {
       hoursWrite: { perUser: 30, perIp: 60 },
       timeBlockWrite: { perUser: 30, perIp: 60 },
       timeBlockRead: { perUser: 60, perIp: 120 },
+      agendaRead: { perUser: 60, perIp: 120 },
+      agendaCancel: { perUser: 30, perIp: 60 },
       publicPage: { perIp: 120 },
       publicAvailability: { perIp: 30 },
       publicBooking: { perIp: 10 },

@@ -11,7 +11,13 @@ import { buildIcs, icsUidOf } from '../../calendar/ics.js';
 import { EMAIL_MESSAGES as EM } from '../email-messages.js';
 import { localParts, formatWhen, formatShortWhen } from '../email-format.js';
 import { headerText } from '../message.js';
-import { EMAIL_KIND_CONFIRMED, EMAIL_KIND_CANCELLED, EMAIL_KIND_RESCHEDULED } from '../email-rules.js';
+import {
+  EMAIL_KIND_CONFIRMED,
+  EMAIL_KIND_CANCELLED,
+  EMAIL_KIND_RESCHEDULED,
+  EMAIL_KIND_CANCELLED_BY_OWNER,
+  EMAIL_CANCELLATION_KINDS,
+} from '../email-rules.js';
 
 /** Corte dos valores no assunto (design 4.2). */
 export const SUBJECT_PART_MAX = 60;
@@ -25,13 +31,13 @@ const SMALL_STYLE = 'font-size:14px;color:#52606d';
 /**
  * @typedef {import('../../appointments/appointments.repository.js').AppointmentRow & { professionalName: string }} Row
  * @param {{
- *   kind: 'appointment_confirmed'|'appointment_cancelled'|'appointment_rescheduled',
+ *   kind: 'appointment_confirmed'|'appointment_cancelled'|'appointment_rescheduled'|'appointment_cancelled_by_owner',
  *   business: { name: string, address: string, phone: string, slug: string, timezone: string,
  *     cancellationLeadMinutes: number },
  *   appointment: Row,                       // o atual (rescheduled: o novo; cancelled: o cancelado)
  *   previous?: Row,                         // só rescheduled
  *   chain: { rootAppointmentId: string, sequence: number },   // sequence do `appointment` (0..3)
- *   manageUrl?: string,                     // confirmed/rescheduled; nunca cancelled
+ *   manageUrl?: string,                     // confirmed/rescheduled; nunca cancelled; cancelled_by_owner: lança
  *   publicBaseUrl: string, nowMs: number, requireHttps: boolean,
  * }} input
  * @returns {{ subject: string, text: string, html: string, ics: { content: string, method: 'PUBLISH'|'CANCEL' } }}
@@ -42,10 +48,16 @@ export function renderAppointmentEmail(input) {
   const base = String(publicBaseUrl ?? '');
   if (!/^https?:\/\/[^/?#\s]+$/.test(base)) throw new Error('renderAppointmentEmail: publicBaseUrl inválido.');
   if (requireHttps && !base.startsWith('https://')) throw new Error('renderAppointmentEmail: link sem https.');
-  if (![EMAIL_KIND_CONFIRMED, EMAIL_KIND_CANCELLED, EMAIL_KIND_RESCHEDULED].includes(kind)) {
+  if (![EMAIL_KIND_CONFIRMED, EMAIL_KIND_CANCELLED, EMAIL_KIND_RESCHEDULED, EMAIL_KIND_CANCELLED_BY_OWNER].includes(kind)) {
     throw new Error('renderAppointmentEmail: tipo desconhecido.');
   }
-  const withManage = kind !== EMAIL_KIND_CANCELLED;
+  const byOwner = kind === EMAIL_KIND_CANCELLED_BY_OWNER;
+  // AF-14 (critério 26): o e-mail do cancelamento pelo dono nunca leva link de gerenciar.
+  if (byOwner && manageUrl !== undefined && manageUrl !== null) {
+    throw new Error('renderAppointmentEmail: cancelamento pelo dono não leva link de gerenciar.');
+  }
+  const cancelled = EMAIL_CANCELLATION_KINDS.includes(kind);
+  const withManage = !cancelled;
   if (withManage && !(typeof manageUrl === 'string' && manageUrl.startsWith(`${base}${MANAGE_PATH_PREFIX}`))) {
     throw new Error('renderAppointmentEmail: link de gerenciar fora da base.');
   }
@@ -72,7 +84,9 @@ export function renderAppointmentEmail(input) {
       ? EM.subjectConfirmed(...subjectArgs)
       : kind === EMAIL_KIND_CANCELLED
         ? EM.subjectCancelled(...subjectArgs)
-        : EM.subjectRescheduled(...subjectArgs),
+        : byOwner
+          ? EM.subjectCancelledByOwner(...subjectArgs)
+          : EM.subjectRescheduled(...subjectArgs),
   );
 
   const priceOnRequest = appointment.priceCents === null || appointment.priceCents === undefined;
@@ -104,7 +118,13 @@ export function renderAppointmentEmail(input) {
     else policyLines.push(EM.rescheduleRemaining(RESCHEDULES_PER_CHAIN_MAX - sequence));
   }
   const intro =
-    kind === EMAIL_KIND_CONFIRMED ? EM.introConfirmed : kind === EMAIL_KIND_CANCELLED ? EM.introCancelled : EM.introRescheduled;
+    kind === EMAIL_KIND_CONFIRMED
+      ? EM.introConfirmed
+      : kind === EMAIL_KIND_CANCELLED
+        ? EM.introCancelled
+        : byOwner
+          ? EM.introCancelledByOwner
+          : EM.introRescheduled;
 
   // Linhas de detalhe, na mesma ordem nas duas versões.
   const whenLines =
@@ -113,7 +133,7 @@ export function renderAppointmentEmail(input) {
           [EM.before, formatWhen(Date.parse(previous.startsAt), Date.parse(previous.endsAt), timeZone)],
           [EM.after, when],
         ]
-      : [[kind === EMAIL_KIND_CANCELLED ? EM.cancelledWhen : null, when]];
+      : [[cancelled ? EM.cancelledWhen : null, when]];
   const details = [
     [`${EM.serviceLabel}: `, serviceLine],
     ['', professionalText],
@@ -136,6 +156,7 @@ export function renderAppointmentEmail(input) {
     ...(withManage
       ? [`${EM.manageLink}: ${manageUrl}`, ...policyLines, '', EM.securityKeep, EM.securityNotYou]
       : [`${EM.bookAgain}: ${pageUrl}`, EM.callBusiness(phone)]),
+    ...(byOwner ? ['', EM.notYouCancelled] : []),
     '',
     EM.footer,
     '',
@@ -167,14 +188,14 @@ ${policyLines.map((line) => html`<p>${line}</p>
     : html`<p><a href="${pageUrl}" style="${LINK_STYLE}">${EM.bookAgain}</a></p>
 <p>${EM.callBusinessLead} <a href="${tel}">${phone}</a>.</p>
 `
-}<p style="${SMALL_STYLE}">${EM.footer}</p>
+}${byOwner ? html`<p style="${SMALL_STYLE}">${EM.notYouCancelled}</p>
+` : ''}<p style="${SMALL_STYLE}">${EM.footer}</p>
 </div>
 </body>
 </html>
 `;
 
-  // .ics (critérios 20 e 21).
-  const cancelled = kind === EMAIL_KIND_CANCELLED;
+  // .ics (critérios 20 e 21; AF-14: o cancelamento pelo dono também é CANCEL).
   const ics = buildIcs({
     method: cancelled ? 'CANCEL' : 'PUBLISH',
     status: cancelled ? 'CANCELLED' : 'CONFIRMED',

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agenda · AgendaFácil</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <script type="module" src="/js/agenda-page.js"></script>
+</head>
+<body>
+  <main class="card agenda">
+    <img id="logo-preview" class="logo-thumb" alt="Logo do negócio" width="96" height="96" hidden>
+    <h1 id="business-name">Carregando…</h1>
+    <p class="subtitle">Agenda</p>
+
+    <p class="help" id="page-status" role="status" aria-live="polite"></p>
+
+    <section id="agenda-section" hidden>
+      <div class="ag-toolbar" role="group" aria-label="Visão">
+        <button type="button" id="view-day" aria-pressed="true">Dia</button>
+        <button type="button" id="view-week" aria-pressed="false">Semana</button>
+      </div>
+      <div class="ag-toolbar" role="group" aria-label="Navegação">
+        <button type="button" id="prev">Anterior</button>
+        <button type="button" id="today">Hoje</button>
+        <button type="button" id="next">Próximo</button>
+        <button type="button" id="refresh" class="button-secondary">Atualizar</button>
+      </div>
+      <div class="field">
+        <label for="agenda-date">Data</label>
+        <input id="agenda-date" type="date">
+      </div>
+      <div class="field">
+        <label for="agenda-professional">Profissional</label>
+        <select id="agenda-professional" class="professional-select"></select>
+      </div>
+      <div class="field field-checkbox">
+        <input id="show-cancelled" type="checkbox">
+        <label for="show-cancelled">Mostrar cancelados</label>
+      </div>
+      <p class="field-warning" id="filter-notice" aria-live="polite"></p>
+
+      <h2 id="agenda-title" class="section-title" tabindex="-1"></h2>
+      <p class="help" id="agenda-timezone"></p>
+      <ul class="ag-legend" id="agenda-legend" aria-label="Legenda"></ul>
+      <p class="field-warning" id="truncated" hidden>Mais de 1.000 itens neste período: nem todos aparecem. Filtre por profissional.</p>
+      <div id="agenda-error" hidden>
+        <p class="form-error" role="alert" id="agenda-error-text"></p>
+        <button type="button" id="retry">Tentar de novo</button>
+      </div>
+      <div id="agenda-days"></div>
+      <div id="empty-state" hidden>
+        <p class="help">Nenhum agendamento neste período.</p>
+        <p class="secondary-link"><a id="public-link">Ver página pública</a> · <a href="/bloqueios">Bloqueios</a></p>
+      </div>
+    </section>
+
+    <dialog id="detail-dialog" class="ag-dialog" aria-labelledby="detail-title">
+      <h2 id="detail-title">Agendamento</h2>
+      <p class="help" id="detail-status" role="status" aria-live="polite"></p>
+      <p class="form-error" id="detail-alert" role="alert" tabindex="-1"></p>
+      <dl class="ag-detail" id="detail-list" hidden>
+        <dt>Situação</dt><dd id="detail-situation"></dd>
+        <dt>Horário</dt><dd id="detail-when"></dd>
+        <dt>Serviço</dt><dd id="detail-service"></dd>
+        <dt>Profissional</dt><dd id="detail-professional"></dd>
+        <dt>Cliente</dt><dd id="detail-customer"></dd>
+        <dt>Telefone</dt><dd><span id="detail-phone"></span> <a id="detail-call" class="ag-action" hidden>Ligar</a></dd>
+        <dt>E-mail</dt><dd><span id="detail-email" class="ag-email"></span>
+          <button type="button" id="copy-email" class="button-secondary">Copiar e-mail</button></dd>
+        <dt>Criado em</dt><dd id="detail-created"></dd>
+      </dl>
+      <ul class="ag-chain" id="detail-chain"></ul>
+      <p class="help" id="copy-status" aria-live="polite"></p>
+      <div class="service-actions">
+        <button type="button" id="detail-cancel" class="button-danger" hidden>Cancelar agendamento</button>
+        <button type="button" id="detail-close" class="button-secondary">Fechar</button>
+      </div>
+    </dialog>
+
+    <dialog id="cancel-dialog" class="ag-dialog" aria-labelledby="cancel-title" aria-describedby="cancel-question">
+      <h2 id="cancel-title">Cancelar agendamento</h2>
+      <p id="cancel-question"></p>
+      <p class="form-error" id="cancel-alert" role="alert"></p>
+      <div class="service-actions">
+        <button type="button" id="cancel-back" autofocus>Voltar</button>
+        <button type="button" id="cancel-confirm" class="button-danger">Cancelar agendamento</button>
+      </div>
+    </dialog>
+
+    <p class="secondary-link"><a href="/bloqueios">Bloqueios</a> · <a href="/profissionais">Profissionais</a> · <a href="/negocio">Negócio</a></p>
+    <button type="button" id="logout-button" class="button-secondary button-spaced">Sair</button>
+  </main>
+</body>
+</html>

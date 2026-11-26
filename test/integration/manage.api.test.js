@@ -512,3 +512,49 @@ describe('fuso (TZ do processo)', () => {
     );
   });
 });
+
+describe('origem do cancelamento (AF-14, critérios 11 e 24)', () => {
+  beforeEach(() => setup());
+  afterEach(() => app.close());
+
+  test('cancelar pelo link grava cancelled_by = customer', async () => {
+    const { token } = await reserve();
+    assert.equal((await cancelManage(app, token, { version: await versionOf(app, token) })).statusCode, 200);
+    const row = await appointmentOf(token);
+    assert.equal(row.status, 'cancelled');
+    assert.equal(row.cancelled_by, 'customer');
+  });
+
+  test('remarcar grava reschedule no antigo e deixa o novo NULL', async () => {
+    const { token } = await reserve();
+    const old = await appointmentOf(token);
+    assert.equal((await rescheduleManage(app, token, { start: `${FRIDAY}T14:00`, version: await versionOf(app, token) })).statusCode, 200);
+    const prev = await app.db.get('SELECT status, cancelled_by FROM appointments WHERE id = ?', [old.id]);
+    assert.deepEqual(prev, { status: 'cancelled', cancelled_by: 'reschedule' });
+    const next = await appointmentOf(token);
+    assert.notEqual(next.id, old.id);
+    assert.equal(next.cancelled_by, null);
+  });
+
+  test('depois do cancelamento pelo dono, POST cancel pelo link dá 200 cancelled sem gravar e sem linha na fila', async () => {
+    const { token } = await reserve();
+    const version = await versionOf(app, token);
+    const row = await appointmentOf(token);
+    const { appointmentVersionOf } = await import('../../src/modules/appointments/manage-token.js');
+    const owner = await app.inject({
+      method: 'POST',
+      url: `/api/agenda/appointments/${row.id}/cancel`,
+      cookies: ana,
+      headers: { 'sec-fetch-site': 'same-origin' },
+      payload: { version: appointmentVersionOf({ id: row.id, status: row.status, updatedAt: row.updated_at }) },
+    });
+    assert.equal(owner.statusCode, 200, owner.body);
+    const before = await everyColumnText(app.db);
+    const res = await cancelManage(app, token, { version });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json().appointment.status, 'cancelled');
+    assert.equal(await everyColumnText(app.db), before);
+    const kinds = (await app.db.all('SELECT kind FROM email_outbox WHERE appointment_id = ?', [row.id])).map((r) => r.kind).sort();
+    assert.deepEqual(kinds, ['appointment_cancelled_by_owner', 'appointment_confirmed']);
+  });
+});

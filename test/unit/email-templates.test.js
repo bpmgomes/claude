@@ -237,3 +237,69 @@ describe('fuso (critério 33)', () => {
     assert.equal(r.subject, 'Agendamento confirmado: Corte em 28/11, 01:00 · Salão da Ana');
   });
 });
+
+describe('appointment_cancelled_by_owner (AF-14, critério 26)', () => {
+  const owner = (over = {}) =>
+    render({ kind: 'appointment_cancelled_by_owner', manageUrl: undefined, appointment: { status: 'cancelled', ...(over.appointment || {}) }, chain: { sequence: 0 }, ...over });
+
+  test('assunto, introdução, horário, fuso, página pública, telefone, notYouCancelled; sem link de gerenciar; .ics CANCEL', () => {
+    const r = owner();
+    assert.equal(r.subject, 'Agendamento cancelado pelo estabelecimento: Corte em 27/11, 10:00 · Salão da Ana');
+    for (const text of [r.text, r.html]) {
+      assert.ok(text.includes(EM.introCancelledByOwner));
+      assert.ok(text.includes(EM.notYouCancelled));
+      assert.ok(text.includes('Horários no fuso America/Sao_Paulo.'));
+      assert.ok(text.includes('Bia Lima'));
+      assert.equal(text.includes('/agendamento/'), false);
+      assert.equal(text.includes(EM.securityKeep), false);
+      assert.equal(text.includes(EM.introCancelled), false);
+    }
+    assert.ok(r.text.includes('Horário cancelado: sexta-feira, 27/11/2026, das 10:00 às 11:00'));
+    assert.ok(r.text.includes(`Agendar novamente: ${BASE}/salao-da-ana`));
+    assert.ok(r.text.indexOf(EM.notYouCancelled) < r.text.indexOf(EM.footer));
+    assert.deepEqual(hrefsOf(r.html).sort(), [`${BASE}/salao-da-ana`, 'tel:+5511912345678'].sort());
+    const ics = parseIcs(r.ics.content);
+    assert.equal(r.ics.method, 'CANCEL');
+    assert.equal(ics.get('METHOD'), 'CANCEL');
+    assert.equal(ics.get('STATUS'), 'CANCELLED');
+    assert.equal(ics.get('SEQUENCE'), '1');
+    // Sem telefone nem e-mail do cliente.
+    for (const s of [r.text, r.html, r.ics.content]) {
+      assert.equal(s.includes('21987654321'), false);
+      assert.equal(s.includes('(21) 98765-4321'), false);
+    }
+  });
+
+  test('com manageUrl presente lança (exigência invertida)', () => {
+    assert.throws(() => owner({ manageUrl: MANAGE }), /gerenciar/);
+  });
+
+  test('escape: valores do banco escapados no HTML e literais no texto', () => {
+    const clean = owner();
+    const countLt = (s) => (s.match(/</g) || []).length;
+    for (const v of [`<img src=x onerror=alert(1)>`, '=HYPERLINK("http://x")', `"aspas" 'simples'`, 'emoji 💇‍♀️']) {
+      const r = owner({ appointment: { serviceName: v, professionalName: v, customerName: v }, business: { name: v, address: v } });
+      assert.ok(r.html.includes(escapeHtml(v)), v);
+      if (/[<>&"']/.test(v)) assert.equal(r.html.includes(v), false, v);
+      assert.ok(r.text.includes(v), v);
+      assert.equal(countLt(r.html), countLt(clean.html), v);
+      assert.equal(/[\r\n]/.test(r.subject), false);
+    }
+  });
+
+  test('mesma saída com TZ em UTC, Asia/Tokyo e America/Sao_Paulo', () => {
+    const saved = process.env.TZ;
+    const outputs = [];
+    try {
+      for (const tz of ['UTC', 'Asia/Tokyo', 'America/Sao_Paulo']) {
+        process.env.TZ = tz;
+        const r = owner();
+        outputs.push([r.subject, r.text, r.html].join('\n'));
+      }
+    } finally {
+      if (saved === undefined) delete process.env.TZ;
+      else process.env.TZ = saved;
+    }
+    assert.equal(new Set(outputs).size, 1);
+  });
+});

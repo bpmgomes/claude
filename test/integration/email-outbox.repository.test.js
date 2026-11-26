@@ -9,6 +9,7 @@ import { emailTestApp, seedBusiness, FRIDAY, outboxRows } from '../helpers/email
 import { bookingBody } from '../helpers/appointments.js';
 import { bookWithLink } from '../helpers/manage.js';
 import { enqueueEmail } from '../../src/modules/email/enqueue-email.js';
+import { OUTBOX_INSERT_RE } from '../helpers/outbox-scan.js';
 import { createEmailOutboxRepository } from '../../src/modules/email/email-outbox.repository.js';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src');
@@ -157,7 +158,7 @@ describe('enqueueEmail (critérios 2 e 6)', () => {
       for (const entry of await readdir(dir, { withFileTypes: true })) {
         const path = join(dir, entry.name);
         if (entry.isDirectory()) await walk(path);
-        else if (/\.(js|sql)$/.test(entry.name) && /INSERT\s+INTO\s+email_outbox/i.test(await readFile(path, 'utf8'))) found.push(path.slice(SRC.length + 1));
+        else if (/\.(js|sql)$/.test(entry.name) && OUTBOX_INSERT_RE.test(await readFile(path, 'utf8'))) found.push(path.slice(SRC.length + 1));
       }
     }
     await walk(SRC);

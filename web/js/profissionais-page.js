@@ -12,7 +12,7 @@ import {
   serviceChoices,
   describeProfessional,
 } from './professionals-controller.js';
-import { hasDuplicateName, PROFESSIONAL_MESSAGES } from '/shared/professionals.js';
+import { hasDuplicateName, PROFESSIONAL_MESSAGES, PROFESSIONAL_ID_RE } from '/shared/professionals.js';
 
 const FORM_FIELDS = ['name', 'serviceIds', 'photo'];
 const DEFAULT_AVATAR = '/img/avatar-default.svg';
@@ -206,6 +206,13 @@ async function removeItem(professional, button) {
   if (!result.ok) {
     if (handleRedirect(result)) return;
     listStatus.textContent = result.message;
+    if (result.blocked && PROFESSIONAL_ID_RE.test(professional.id)) {
+      // AF-14: atalho para a agenda da semana desse profissional (contrato do AF-07, 4.5).
+      const link = document.createElement('a');
+      link.href = `/agenda?view=week&professional=${professional.id}`;
+      link.textContent = 'Ver agendamentos';
+      listStatus.append(' ', link);
+    }
     return;
   }
   saveStatus.textContent = result.alreadyRemoved ? 'Este profissional já tinha sido removido.' : 'Profissional removido.';

@@ -97,7 +97,8 @@ describe('migração 012 (critérios 1 e 5)', () => {
         [randomUUID(), owner, NOW, NOW],
       );
       // AF-18: a 013 (fila de e-mails) vem junto (critério 33: lista de migrações).
-      assert.deepEqual(await runMigrations(db), ['012_appointment_manage', '013_email_outbox']);
+      // AF-14: a 014 (cancelled_by e kind novo) vem junto (critério 43).
+      assert.deepEqual(await runMigrations(db), ['012_appointment_manage', '013_email_outbox', '014_owner_cancellation']);
       assert.equal((await db.get('SELECT cancellation_lead_minutes AS n FROM businesses')).n, 120);
       await db.close();
     } finally {

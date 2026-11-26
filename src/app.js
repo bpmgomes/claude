@@ -63,6 +63,8 @@ import { createManageTokensRepository } from './modules/appointments/manage-toke
 import { createReschedulesRepository } from './modules/appointments/reschedules.repository.js';
 import { createManageService } from './modules/appointments/manage.service.js';
 import manageRoutes from './modules/appointments/manage.routes.js';
+import { createAgendaService } from './modules/agenda/agenda.service.js';
+import agendaRoutes from './modules/agenda/agenda.routes.js';
 import { redactLogUrl } from './http/log-redact.js';
 import { createImageLimiter } from './images/image-limiter.js';
 import { createStorage } from './storage/index.js';
@@ -149,6 +151,7 @@ export const PAGES = Object.freeze({
   '/profissionais': 'profissionais.html',
   '/horarios': 'horarios.html',
   '/bloqueios': 'bloqueios.html',
+  '/agenda': 'agenda.html',
 });
 
 /**
@@ -391,6 +394,22 @@ export async function buildApp(overrides = {}) {
   });
   // Tokens vencidos há mais de 30 dias saem no boot; uma falha não impede a subida.
   await manageService.purgeExpiredTokens();
+  // Agenda do dono (AF-14): leitura e cancelamento pelo dono, com a mesma porta de eventos e a fila.
+  const agendaService = createAgendaService({
+    db,
+    businessesRepository,
+    professionalsRepository,
+    appointmentsRepository,
+    timeBlocksRepository,
+    customersRepository,
+    manageTokensRepository,
+    reschedulesRepository,
+    appointmentEvents,
+    enqueueEmail,
+    emailEnabled: emailConfig.enabled,
+    now,
+    log: app.log,
+  });
   // Fila de e-mails (AF-18, 5.6), também com `none`: expira as pendentes velhas e purga as terminais.
   await emailWorker.maintenance();
   // R16: o Fastify roda os hooks onClose na ordem INVERSA do registro. Este é registrado depois do
@@ -437,6 +456,7 @@ export async function buildApp(overrides = {}) {
     manageTokensRepository,
     reschedulesRepository,
     manageService,
+    agendaService,
     imageLimiter,
     tokenIssuer,
     emailOutboxRepository,
@@ -538,6 +558,7 @@ export async function buildApp(overrides = {}) {
   await app.register(professionalsRoutes);
   await app.register(workingHoursRoutes);
   await app.register(timeBlocksRoutes);
+  await app.register(agendaRoutes);
   // Antes de publicPageRoutes (rota estática /api/public/... tem prioridade sobre `/:slug`).
   await app.register(availabilityRoutes);
   await app.register(appointmentsRoutes);

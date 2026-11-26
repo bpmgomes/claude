@@ -1,11 +1,22 @@
+import { AGENDA_STATUSES, CANCELLED_BY } from '../../shared/agenda.js';
+
 /**
  * @typedef {{
  *   id: string, businessId: string, professionalId: string, customerId: string, serviceId: string,
  *   serviceName: string, durationMinutes: number, priceCents: number|null,
  *   customerName: string, customerPhone: string, startsAt: string, endsAt: string,
  *   status: string, createdAt: string, updatedAt: string, cancelledAt: string|null,
+ *   cancelledBy: 'customer'|'owner'|'reschedule'|null,
  * }} AppointmentRow
  */
+
+/**
+ * Status que NÃO são cancelados, como lista literal (AF-14, design 3.2): com `<> 'cancelled'` o
+ * planejador poderia trocar o índice (business_id, starts_at) por um dos índices parciais. Derivada
+ * de AGENDA_STATUSES (= APPOINTMENT_STATUSES, teste); valores fixos do código, nunca dado.
+ */
+export const AGENDA_NOT_CANCELLED_STATUSES = Object.freeze(AGENDA_STATUSES.filter((s) => s !== 'cancelled'));
+const NOT_CANCELLED_IN = `a.status IN (${AGENDA_NOT_CANCELLED_STATUSES.map((s) => `'${s}'`).join(', ')})`;
 
 /** = CHECK da migração 010 e o teto de duração do AF-06. */
 export const APPOINTMENT_DURATION_MAX_MINUTES = 480;
@@ -21,7 +32,7 @@ const ACTIVE_PROFESSIONAL_JOIN = `JOIN professionals p
 
 const COLUMNS = `a.id, a.business_id, a.professional_id, a.customer_id, a.service_id, a.service_name,
        a.duration_minutes, a.price_cents, a.customer_name, a.customer_phone, a.starts_at, a.ends_at,
-       a.status, a.created_at, a.updated_at, a.cancelled_at`;
+       a.status, a.created_at, a.updated_at, a.cancelled_at, a.cancelled_by`;
 
 function fromRow(row) {
   if (!row) return undefined;
@@ -42,6 +53,7 @@ function fromRow(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     cancelledAt: row.cancelled_at ?? null,
+    cancelledBy: row.cancelled_by ?? null,
   };
 }
 
@@ -115,18 +127,111 @@ export function createAppointmentsRepository(db) {
     },
 
     /**
-     * Linha completa + nome do profissional por JOIN, mesmo removido (AF-14, AF-18 e testes).
-     * @returns {Promise<(AppointmentRow & { professionalName: string })|undefined>}
+     * Linha completa + nome do profissional por JOIN, mesmo removido (AF-14, AF-18 e testes), e
+     * `professionalRemoved` (AF-14).
+     * @returns {Promise<(AppointmentRow & { professionalName: string, professionalRemoved: boolean })|undefined>}
      */
     async findById(id, businessId, conn = db) {
       const row = await conn.get(
-        `SELECT ${COLUMNS}, p.name AS professional_name FROM appointments a
+        `SELECT ${COLUMNS}, p.name AS professional_name, p.removed_at AS professional_removed_at FROM appointments a
            JOIN professionals p ON p.id = a.professional_id AND p.business_id = a.business_id
           WHERE a.id = ? AND a.business_id = ?`,
         [id, businessId],
       );
       if (!row) return undefined;
-      return { ...fromRow(row), professionalName: row.professional_name };
+      return {
+        ...fromRow(row),
+        professionalName: row.professional_name,
+        professionalRemoved: row.professional_removed_at !== null && row.professional_removed_at !== undefined,
+      };
+    },
+
+    /**
+     * Agenda do dono (AF-14, design 4.1): início em [fromIso, toIso), profissionais ativos E removidos,
+     * por starts_at, name_key e id, até `limit` linhas (o serviço pede AGENDA_ITEMS_MAX + 1). Sem
+     * cancelados: `a.status IN ('confirmed','completed','no_show')` (3.2: nunca `<> 'cancelled'`).
+     * Faixa exata de starts_at (o dia é o do início, C-6): sem o recuo de 480 min.
+     * @returns {Promise<Array<{ id: string, professionalId: string, professionalName: string,
+     *   professionalNameKey: string, professionalRemoved: boolean, serviceName: string, customerName: string,
+     *   startsAt: string, endsAt: string, status: string, updatedAt: string, cancelledAt: string|null,
+     *   cancelledBy: string|null }>>}
+     */
+    async listForAgenda(businessId, { fromIso, toIso, professionalId = null, includeCancelled = false, limit }, conn = db) {
+      const where = ['a.business_id = ?', 'a.starts_at >= ?', 'a.starts_at < ?'];
+      const params = [businessId, fromIso, toIso];
+      if (professionalId) {
+        where.push('a.professional_id = ?');
+        params.push(professionalId);
+      }
+      if (!includeCancelled) where.push(NOT_CANCELLED_IN);
+      const rows = await conn.all(
+        `SELECT a.id, a.professional_id, p.name AS professional_name, p.name_key AS professional_name_key,
+                p.removed_at AS professional_removed_at, a.service_name, a.customer_name, a.starts_at, a.ends_at,
+                a.status, a.updated_at, a.cancelled_at, a.cancelled_by
+           FROM appointments a
+           JOIN professionals p ON p.id = a.professional_id AND p.business_id = a.business_id
+          WHERE ${where.join(' AND ')}
+          ORDER BY a.starts_at ASC, p.name_key ASC, a.id ASC LIMIT ?`,
+        [...params, limit],
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        professionalId: r.professional_id,
+        professionalName: r.professional_name,
+        professionalNameKey: r.professional_name_key,
+        professionalRemoved: r.professional_removed_at !== null && r.professional_removed_at !== undefined,
+        serviceName: r.service_name,
+        customerName: r.customer_name,
+        startsAt: r.starts_at,
+        endsAt: r.ends_at,
+        status: r.status,
+        updatedAt: r.updated_at,
+        cancelledAt: r.cancelled_at ?? null,
+        cancelledBy: r.cancelled_by ?? null,
+      }));
+    },
+
+    /**
+     * Contagens por dia da agenda (AF-14, 4.1): `boundaries` são os n + 1 instantes ISO das fronteiras
+     * dos n dias (b0 < ... < bn). Uma consulta: CASE de faixas em starts_at (só `?`, montado pelo
+     * NÚMERO de dias, nunca por texto recebido), GROUP BY dia. Dias sem linha voltam zerados.
+     * `active` = não cancelado; `cancelled` = cancelado sem ser o antigo de uma remarcação (origem nula,
+     * cliente ou dono); `rescheduled` = `cancelled_by = 'reschedule'`.
+     * @returns {Promise<Array<{ active: number, cancelled: number, rescheduled: number }>>} tamanho n
+     */
+    async countForAgenda(businessId, { boundaries, professionalId = null }, conn = db) {
+      if (!Array.isArray(boundaries) || boundaries.length < 2 || boundaries.length > 32) {
+        throw new RangeError('countForAgenda: fronteiras inválidas.');
+      }
+      const days = boundaries.length - 1;
+      const inner = boundaries.slice(1, -1);
+      const dayExpr =
+        inner.length === 0
+          ? '0'
+          : `CASE ${inner.map((_, i) => `WHEN a.starts_at < ? THEN ${i}`).join(' ')} ELSE ${days - 1} END`;
+      const where = ['a.business_id = ?', 'a.starts_at >= ?', 'a.starts_at < ?'];
+      const params = [...inner, businessId, boundaries[0], boundaries[days]];
+      if (professionalId) {
+        where.push('a.professional_id = ?');
+        params.push(professionalId);
+      }
+      const rows = await conn.all(
+        `SELECT ${dayExpr} AS day,
+                SUM(CASE WHEN a.status = 'cancelled' THEN 0 ELSE 1 END) AS active,
+                SUM(CASE WHEN a.status = 'cancelled' AND (a.cancelled_by IS NULL OR a.cancelled_by <> 'reschedule') THEN 1 ELSE 0 END) AS cancelled,
+                SUM(CASE WHEN a.status = 'cancelled' AND a.cancelled_by = 'reschedule' THEN 1 ELSE 0 END) AS rescheduled
+           FROM appointments a
+          WHERE ${where.join(' AND ')}
+          GROUP BY day`,
+        params,
+      );
+      const out = Array.from({ length: days }, () => ({ active: 0, cancelled: 0, rescheduled: 0 }));
+      for (const r of rows) {
+        const i = Number(r.day);
+        if (!Number.isInteger(i) || i < 0 || i >= days) continue;
+        out[i] = { active: Number(r.active), cancelled: Number(r.cancelled), rescheduled: Number(r.rescheduled) };
+      }
+      return out;
     },
 
     /**
@@ -159,13 +264,20 @@ export function createAppointmentsRepository(db) {
     /**
      * Cancela só se ainda `confirmed` (AF-12 critério 21; AF-11 4.5; AF-22 seção 4). O chamador exige
      * `changes === 1`. O trigger `_update` não recusa a passagem para `cancelled`.
+     * `cancelledBy` (AF-14): 'customer' | 'owner' | 'reschedule'; ausente grava NULL (compatível com os
+     * testes de repositório do AF-12). Valor fora da lista: TypeError (erro de programação; o chamador
+     * responde 503 e a transação desfaz tudo). Um teste de varredura exige `cancelledBy` em toda
+     * chamada de src/.
      * @returns {Promise<{ changes: number }>}
      */
-    async cancelIfConfirmed(id, businessId, nowIso, conn = db) {
+    async cancelIfConfirmed(id, businessId, nowIso, conn = db, { cancelledBy = null } = {}) {
+      if (cancelledBy !== null && !CANCELLED_BY.includes(cancelledBy)) {
+        throw new TypeError('cancelIfConfirmed: cancelledBy desconhecido.');
+      }
       return conn.run(
-        `UPDATE appointments SET status = 'cancelled', cancelled_at = ?, updated_at = ?
+        `UPDATE appointments SET status = 'cancelled', cancelled_at = ?, updated_at = ?, cancelled_by = ?
           WHERE id = ? AND business_id = ? AND status = 'confirmed'`,
-        [nowIso, nowIso, id, businessId],
+        [nowIso, nowIso, cancelledBy, id, businessId],
       );
     },
 

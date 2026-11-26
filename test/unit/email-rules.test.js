@@ -14,6 +14,9 @@ import {
   EMAIL_PERMANENT_CODES,
   EMAIL_LEASE_MS,
   EMAIL_SEND_TIMEOUT_MS,
+  EMAIL_KINDS,
+  EMAIL_KIND_CANCELLED_BY_OWNER,
+  EMAIL_CANCELLATION_KINDS,
 } from '../../src/modules/email/email-rules.js';
 
 const MIGRATION = fileURLToPath(new URL('../../src/db/migrations/013_email_outbox.sql', import.meta.url));
@@ -61,4 +64,17 @@ test('todos os códigos passam no CHECK de last_error_code; classes sem interse�
     assert.equal(row.ok, 1, code);
   }
   await db.close();
+});
+
+test('AF-14: EMAIL_KINDS é igual ao CHECK de kind vigente (lido do sqlite_master); cancelamentos são os dois tipos CANCEL', async () => {
+  const db = createDatabase({ databasePath: ':memory:' });
+  await runMigrations(db);
+  const { sql } = await db.get("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'email_outbox'");
+  await db.close();
+  const m = /email_outbox_kind_check\s+CHECK \(kind IN \(([^)]*)\)\)/.exec(sql);
+  assert.ok(m, sql);
+  const kinds = m[1].split(',').map((k) => k.trim().replace(/^'|'$/g, ''));
+  assert.deepEqual([...kinds].sort(), [...EMAIL_KINDS].sort());
+  assert.ok(EMAIL_KINDS.includes(EMAIL_KIND_CANCELLED_BY_OWNER));
+  assert.deepEqual([...EMAIL_CANCELLATION_KINDS], ['appointment_cancelled', 'appointment_cancelled_by_owner']);
 });

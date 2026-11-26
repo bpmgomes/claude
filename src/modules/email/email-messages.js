@@ -6,10 +6,15 @@ export const EMAIL_MESSAGES = Object.freeze({
   subjectConfirmed: (service, ddmm, time, business) => `Agendamento confirmado: ${service} em ${ddmm}, ${time} · ${business}`,
   subjectCancelled: (service, ddmm, time, business) => `Agendamento cancelado: ${service} em ${ddmm}, ${time} · ${business}`,
   subjectRescheduled: (service, ddmm, time, business) => `Agendamento remarcado: ${service} para ${ddmm}, ${time} · ${business}`,
+  // AF-14 (critério 26): cancelamento pelo dono, texto fixo, sem texto livre do dono.
+  subjectCancelledByOwner: (service, ddmm, time, business) =>
+    `Agendamento cancelado pelo estabelecimento: ${service} em ${ddmm}, ${time} · ${business}`,
   greeting: (name) => `Olá, ${name},`,
   introConfirmed: 'Seu agendamento está confirmado.',
   introCancelled: 'Seu agendamento foi cancelado pelo link de gerenciar.',
   introRescheduled: 'Seu agendamento foi remarcado.',
+  introCancelledByOwner: 'O estabelecimento cancelou o seu agendamento.',
+  notYouCancelled: 'Se você não fez este agendamento, desconsidere esta mensagem.',
   timezone: (tz) => `Horários no fuso ${tz}.`,
   before: 'Antes:',
   after: 'Agora:',
