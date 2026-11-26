@@ -4,6 +4,8 @@
 // Fora do `npm test`: `npm run test:e2e`. Relógio do servidor fixo: quinta 2026-11-26, 09:00 em São Paulo.
 // Datas reservadas ao cenário literal do AF-22 (10 rodadas, 10:00 com a mesma profissional), fora das
 // usadas pelos outros casos: 2026-12-10, 11, 14, 15, 16, 17, 18, 21, 22 e 23.
+// Globais de navegador usados só nas funções executadas no Chromium (page.evaluate etc.; AF-20, lint).
+/* global document, window, location */
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadPlaywright } from './playwright.js';

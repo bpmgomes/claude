@@ -5,7 +5,7 @@ import { createClock } from '../helpers/clock.js';
 import { seedPublicBusiness } from '../helpers/public-fixture.js';
 import { signupAndLogin, createBusinessFor, createService, createProfessional, putHours, WEEK_9_TO_18 } from '../helpers/session.js';
 import { pngOf } from '../helpers/images.js';
-import { tagsOf, tagNamesOf, textOf } from '../helpers/html.js';
+import { tagsOf, textOf } from '../helpers/html.js';
 import {
   PUBLIC_PAGE_CSP,
   PUBLIC_MESSAGE_CSP,

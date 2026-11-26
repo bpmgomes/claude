@@ -5,9 +5,11 @@ Backend Fastify + SQLite (`node:sqlite`) e frontend estático em `web/`.
 ## Como rodar
 
 ```
-npm install
+npm install      # ou: npm ci (instalação reprodutível pelo package-lock.json, como no CI)
 npm run dev      # ou: npm start
+npm run lint     # ESLint 9, sem regras de estilo (ver a seção CI)
 npm test
+npm run smoke    # sobe a aplicação como em produção e confere que ela responde (ver a seção CI)
 npm run perf     # desempenho da página pública (Playwright + Chromium)
 npm run test:e2e # responsividade, acessibilidade e XSS da página pública (Playwright + Chromium)
 ```
@@ -170,3 +172,105 @@ Chrome e Firefox aceitam cookie `Secure` em `http://localhost`. Em outro navegad
 - Porta de eventos (`src/modules/appointments/appointment-events-port.js`): `appointmentEvents.confirmed({ appointmentId, businessId })` é chamada depois do `COMMIT`, sem `await`; falha ou demora só geram o log `appointment_event_failed` e não mudam o 201. Padrão: implementação nula. O AF-18 (e-mail) implementa e lê os dados pelo repositório; recomendação: outbox gravada na mesma transação.
 - Logs: `appointment_created`, `appointment_replayed`, `appointment_slot_taken`, `appointment_limit_reached`, `appointment_booking_failed` e `appointment_suggestions_failed`, só com ids e códigos; nome, telefone e e-mail nunca.
 - **Ainda não há cancelamento pela interface** (risco R1 do design): nem o cliente nem o dono cancelam até o AF-12/AF-14. Até lá, cancelar é operação de suporte no banco: `UPDATE appointments SET status = 'cancelled', cancelled_at = <agora ISO>, updated_at = <agora ISO> WHERE id = ? AND business_id = ?`. Não haverá deploy sem aprovação do dono do produto.
+
+## CI
+
+O workflow `.github/workflows/ci.yml` (GitHub Actions) roda em todo pull request (qualquer base),
+em push para `claude/project-thread-5e1ja7` e `main`, manualmente (`workflow_dispatch`) e, só o
+`audit`, toda segunda às 06:00 de São Paulo. Permissão `contents: read`, sem segredos e sem
+`pull_request_target`. Todos os jobs usam `ubuntu-latest`, Node `22` e `npm ci`.
+
+| Job | PR | Push | Semanal | O que faz |
+|---|---|---|---|---|
+| `lint` | sim | sim | não | `npm run lint` |
+| `test (UTC)`, `test (Asia/Tokyo)` | sim | sim | não | `npm test` com `TZ` do job |
+| `e2e (UTC)`, `e2e (Asia/Tokyo)` | sim | sim | não | `npm run test:e2e` no Chromium; em falha, a saída vai como artefato (7 dias) |
+| `build-check` | sim | sim | não | `npm run smoke` com um `CONFLICTS_TOKEN_SECRET` gerado no job |
+| `audit` | sim | sim | sim | `npm audit` (informativo) e `npm audit --omit=dev --audit-level=high` (decide o job) |
+| `perf` | não | sim | não | `npm run perf`, informativo (`continue-on-error`); relatório como artefato por 30 dias |
+| `ci-ok` | sim | sim | não | agregador: verde só se `lint`, `test`, `e2e` e `build-check` terminarem em `success` |
+
+**`ci-ok` é o único check a exigir na proteção de branch.** A matriz pode mudar sem reconfigurar a
+proteção. `audit` e `perf` ficam fora: um vermelho neles é visível, mas não bloqueia o merge.
+
+### Como reproduzir cada job localmente
+
+```
+npm ci
+npm run lint
+npm test
+TZ=Asia/Tokyo npm test
+npm run test:e2e
+TZ=Asia/Tokyo npm run test:e2e
+npm run smoke
+npm audit --omit=dev --audit-level=high
+npm run perf
+```
+
+- `npm run smoke` (`scripts/smoke.js`) migra um banco temporário, sobe `node src/server.js` com
+  `NODE_ENV=production`, confere que `GET /api/nao-existe` responde 404 JSON (`NOT_FOUND`,
+  `no-store`) e que `GET /login` responde HTML, e encerra o servidor com `SIGTERM`. Sai com 0 e
+  `smoke: ok (<ms> ms)`, ou com 1 e `smoke: FALHOU: <motivo>`. Sem `CONFLICTS_TOKEN_SECRET` no
+  ambiente, gera um de uso único; definido (mesmo curto ou vazio), é repassado como veio.
+  `COOKIE_SECURE` só é repassado se estiver definido. Assim, `CONFLICTS_TOKEN_SECRET=curto npm run
+  smoke` e `COOKIE_SECURE=false npm run smoke` falham, como falharia a produção.
+- **Playwright no CI**: localmente nada muda (o Playwright e o Chromium continuam vindo do
+  ambiente, decisão do AF-09). No CI, os jobs `e2e` e `perf` rodam, depois do `npm ci`,
+  `npm install --no-save "playwright@$PLAYWRIGHT_VERSION"` (não toca no `package.json` nem no
+  `package-lock.json`) e `npx playwright install --with-deps chromium`, com cache de
+  `~/.cache/ms-playwright` por versão (em cache hit, só `npx playwright install-deps chromium`).
+- **Ao trocar a versão local do Playwright, atualize `PLAYWRIGHT_VERSION` no `ci.yml`** para a
+  mesma versão (`node -p "require('playwright/package.json').version"`).
+- **Ao mudar a branch padrão do repositório, acrescente-a em `on.push.branches` do `ci.yml`.** O
+  `pull_request` continua cobrindo qualquer base.
+
+### Falha no `audit`
+
+Corrija com `npm audit fix` ou atualizando a dependência afetada. Se não houver correção para uma
+vulnerabilidade `high`/`critical` de produção, documente a exceção (pacote, aviso, motivo, prazo)
+e combine com o PO. **Nunca** esconda a falha com `|| true` nem `continue-on-error` no passo que
+decide o job. A equipe trata `high`/`critical` de produção em até 1 sprint.
+
+### Lint
+
+ESLint 9 (`eslint.config.js`): `@eslint/js` `recommended`, mais `no-unused-vars` (ignora nomes com
+prefixo `_`), `eqeqeq` e `no-var`. Diretivas `eslint-disable` sem uso falham o lint. Não há regra
+de estilo nem verificação de formato. Globais: Node em `src/`, `test/` e `scripts/`; navegador em
+`web/`; os comuns aos dois em `src/shared/` (servido ao navegador e importado pelo servidor). Os
+E2E declaram com `/* global ... */` os globais de navegador usados nas funções executadas no
+Chromium.
+
+### Proteção de branch (feita pelo dono do repositório)
+
+O time não consegue nem deve fazer isto: exige permissão de administrador do repositório.
+
+1. Mesclar o AF-20 e esperar uma execução de `ci.yml` na branch padrão (um check só aparece na
+   lista da regra depois de ter rodado ao menos uma vez nos últimos 7 dias).
+2. GitHub > repositório > Settings > Branches (ou Rules > Rulesets) > Add branch ruleset / Add
+   classic branch protection rule, alvo: a branch padrão.
+3. Marcar "Require a pull request before merging". Marcar "Require status checks to pass before
+   merging" e, em busca de status checks, adicionar `ci-ok` fixando a origem no app "GitHub
+   Actions". Opcional recomendado: "Require branches to be up to date before merging".
+   Importante: com `pull_request`, o CI roda o `ci.yml` do próprio PR, então quem abre o PR pode
+   alterar o workflow (ou criar outro job chamado `ci-ok`) e ficar verde. Para fechar isso, marcar
+   também "Required approvals" ≥ 1, "Dismiss stale pull request approvals when new commits are
+   pushed" e "Require approval of the most recent reviewable push"; e, se houver mais de uma
+   pessoa com escrita, criar `.github/CODEOWNERS` cobrindo `/.github/`, `package.json` e
+   `package-lock.json` com "Require review from Code Owners". Em rulesets, a alternativa é
+   "Require workflows to pass", que roda o workflow da branch padrão. Com um único mantenedor,
+   aprovação obrigatória bloqueia o próprio merge: nesse caso, revisar à mão qualquer PR que
+   mexa em `.github/`.
+4. Marcar "Block force pushes" e "Restrict deletions". Para a regra valer para o próprio dono, não
+   conceder bypass (clássica: "Do not allow bypassing the above settings" / "Include
+   administrators"; ruleset: bypass list vazia).
+5. Salvar.
+
+Observações:
+- Proteger a branch de trabalho atual (`claude/project-thread-5e1ja7`) impede o push direto de
+  quem trabalha nela hoje. A escolha da branch (por exemplo, criar `main` e torná-la padrão) é do
+  dono; o `ci.yml` já cobre `main`.
+- Em repositório privado, regras de branch exigem plano pago (Pro/Team ou superior), e os minutos
+  de Actions do plano gratuito são limitados. Sem proteção possível, vale a regra de equipe "não
+  mesclar com `ci-ok` vermelho", que a ferramenta não impõe.
+- Verificação: abrir um PR de teste com um teste quebrado de propósito; o merge fica bloqueado
+  ("Required statuses must pass"). Corrigir o teste libera o merge. Fechar o PR sem mesclar.

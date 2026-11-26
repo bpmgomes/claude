@@ -1,6 +1,6 @@
 // Parser mínimo, só para o HTML gerado pela página pública (atributos sempre entre aspas duplas).
 
-const ATTR_RE = /([^\s"'<>\/=]+)(?:\s*=\s*"([^"]*)")?/g;
+const ATTR_RE = /([^\s"'<>/=]+)(?:\s*=\s*"([^"]*)")?/g;
 
 /**
  * Lista de atributos de cada tag `name` (minúsculas), na ordem do documento.

@@ -553,7 +553,7 @@ test('sem sessão, PUT /hours responde 401 e não consome o limite do usuário',
 // ---------------------------------------------------------------------------
 
 const { seedPublicBusiness } = await import('../helpers/public-fixture.js');
-const { RATE_LIMITED_HTML, NOT_FOUND_HTML, PUBLIC_MESSAGE_CSP } = await import('../../src/modules/public-page/public-page.render.js');
+const { RATE_LIMITED_HTML, PUBLIC_MESSAGE_CSP } = await import('../../src/modules/public-page/public-page.render.js');
 
 const visit = (app, url, remoteAddress = '10.1.1.1', extra = {}) =>
   app.inject({ method: 'GET', url, remoteAddress, ...extra });

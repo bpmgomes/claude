@@ -223,7 +223,7 @@ Critérios de aceite
 ## Técnico, bugs e spikes
 
 ### AF-20 · Pipeline de CI
-Tipo: Técnica · Prioridade: Alta · Pontos: 3 · Status: TODO
+Tipo: Técnica · Prioridade: Alta · Pontos: 3 · Status: DONE
 
 Configurar CI que rode lint, testes e build a cada pull request. PR não pode ser mesclado com CI quebrado.
 

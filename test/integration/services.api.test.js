@@ -472,7 +472,13 @@ describe('logs', () => {
       assert.ok(text.includes(event), event);
     }
     assert.ok(!text.includes('Nome Secreto do Log'));
-    assert.ok(!text.includes('4321'));
+    // Compara valores dos logs, e não o texto: '4321' aparece por acaso em `time`, `responseTime`
+    // ou UUIDs e deixava o teste intermitente (AF-20).
+    const values = [];
+    const collect = (v) => (v && typeof v === 'object' ? Object.values(v).forEach(collect) : values.push(v));
+    for (const line of text.split('\n').filter(Boolean)) collect(JSON.parse(line));
+    const leaked = values.filter((v) => v === 432109 || v === 4321.09 || /4[.]?321,09|432109/.test(String(v)));
+    assert.deepEqual(leaked, []);
   });
 });
 

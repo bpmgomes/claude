@@ -1,0 +1,227 @@
+# AF-20: CI. Único check a exigir na proteção de branch: ci-ok (README, seção CI).
+#
+# Actions: só da organização actions/ (mantida pelo GitHub), fixadas por tag de versão maior e não
+# por SHA (design AF-20, 3.3): sem Dependabot, um SHA fixo envelheceria sem aviso. Uma action de
+# terceiros, se um dia entrar, vai por SHA completo com a tag em comentário.
+# Tags: checkout@v5, setup-node@v5, cache@v4, upload-artifact@v4 (as do design, 3.3). Em
+# 2026-11-26 não foi possível conferir online a última versão maior de cada uma; revisar.
+name: CI
+
+on:
+  pull_request:            # qualquer base; nunca pull_request_target (sem segredos para forks)
+  push:
+    branches: [claude/project-thread-5e1ja7, main]   # branch padrão atual e main, se vier a existir
+  schedule:
+    - cron: '0 9 * * 1'    # segunda, 06:00 em São Paulo: só o job audit
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# PR: um grupo por PR, e a execução nova cancela a antiga. Push, schedule e dispatch: grupo único
+# por execução (run_id), então nada é cancelado nem enfileirado na branch padrão.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash            # explícito: bash -eo pipefail (o "tee" do e2e depende do pipefail)
+
+env:
+  # A mesma versão do ambiente local, onde os E2E do AF-11 e do AF-22 passaram (README, seção CI).
+  # Fixa, nunca "latest"; >= 1.45 para o install-deps suportar o Ubuntu 24.04 do ubuntu-latest.
+  PLAYWRIGHT_VERSION: '1.63.0'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Versões
+        run: node --version && npm --version
+      - run: npm ci
+      - run: npm run lint
+
+  test:
+    name: test (${{ matrix.tz }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tz: UTC, label: utc }
+          - { tz: Asia/Tokyo, label: tokyo }
+    env:
+      TZ: ${{ matrix.tz }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Versões
+        run: node --version && npm --version
+      - run: npm ci
+      - run: npm test
+
+  e2e:
+    name: e2e (${{ matrix.tz }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tz: UTC, label: utc }
+          - { tz: Asia/Tokyo, label: tokyo }
+    env:
+      TZ: ${{ matrix.tz }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Versões
+        run: node --version && npm --version
+      - run: npm ci
+      - name: Playwright fora do package.json (AF-09, decisão 1)
+        run: npm install --no-save "playwright@$PLAYWRIGHT_VERSION"
+      - name: Cache do Chromium
+        id: pw
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
+      - name: Chromium e dependências de sistema
+        if: steps.pw.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - name: Dependências de sistema (Chromium do cache)
+        if: steps.pw.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+      - name: E2E
+        run: npm run test:e2e 2>&1 | tee "$RUNNER_TEMP/e2e-output.txt"
+      - name: Saída do E2E
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/e2e-output.txt
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  build-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Versões
+        run: node --version && npm --version
+      - run: npm ci
+      - name: Segredo de uso único (não é segredo do repositório)
+        run: |
+          s=$(openssl rand -base64 32)
+          echo "::add-mask::$s"
+          echo "CONFLICTS_TOKEN_SECRET=$s" >> "$GITHUB_ENV"
+      - run: npm run smoke
+
+  # Informativo: fora do ci-ok (design AF-20, decisão 3). Vermelho fica visível, sem bloquear o merge.
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Versões
+        run: node --version && npm --version
+      - name: Relatório completo (informativo)
+        continue-on-error: true
+        run: npm audit
+      - name: Produção, high ou critical (decide o job)
+        run: npm audit --omit=dev --audit-level=high
+
+  # Informativo: só em push, fora do ci-ok (design AF-20, decisão 4).
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'push'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Versões
+        run: node --version && npm --version
+      - run: npm ci
+      - name: Playwright fora do package.json (AF-09, decisão 1)
+        run: npm install --no-save "playwright@$PLAYWRIGHT_VERSION"
+      - name: Cache do Chromium
+        id: pw
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
+      - name: Chromium e dependências de sistema
+        if: steps.pw.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - name: Dependências de sistema (Chromium do cache)
+        if: steps.pw.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+      - name: Perf
+        run: PERF_REPORT="$RUNNER_TEMP/perf-report.json" npm run perf
+      - name: Relatório de perf
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-report
+          path: ${{ runner.temp }}/perf-report.json*
+          if-no-files-found: ignore
+          retention-days: 30
+
+  ci-ok:
+    name: ci-ok
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [lint, test, e2e, build-check]
+    if: always() && github.event_name != 'schedule'
+    steps:
+      - name: Todos os jobs obrigatórios em success
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
+          jq -e 'all(.[]; .result == "success")' <<< "$NEEDS" > /dev/null

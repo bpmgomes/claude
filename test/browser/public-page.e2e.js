@@ -1,6 +1,8 @@
 // E2E da página pública (AF-09, AF-10 e AF-04): responsividade, acessibilidade, imagens, CLS, XSS,
 // a seção de horários e o passo "Seus dados" no Chromium. Fora do `npm test`: `npm run test:e2e`
 // (Playwright e Chromium do ambiente, sem throttling). Relógio do servidor fixo: quinta-feira 2026-11-26, 09:00 em São Paulo.
+// Globais de navegador usados só nas funções executadas no Chromium (page.evaluate etc.; AF-20, lint).
+/* global document, window, getComputedStyle, MutationObserver, DataTransfer, ClipboardEvent */
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadPlaywright } from './playwright.js';

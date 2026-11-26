@@ -132,7 +132,6 @@ export async function buildApp(overrides = {}) {
   // em log). Lança fora de development/test sem CONFLICTS_TOKEN_SECRET (AF-11, critério 36).
   const { secret: conflictsTokenSecret, generated: conflictsTokenSecretGenerated } =
     resolveConflictsTokenSecret(fullConfig);
-  // eslint-disable-next-line no-unused-vars
   const { conflictsTokenSecret: _secret, ...publicConfig } = fullConfig;
   const config = Object.freeze(publicConfig);
   const now = overrides.now || (() => new Date());
