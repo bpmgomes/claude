@@ -41,7 +41,7 @@
       <p class="field-warning" id="filter-notice" aria-live="polite"></p>
 
       <h2 id="agenda-title" class="section-title" tabindex="-1"></h2>
-      <p class="help" id="agenda-timezone"></p>
+      <p class="help tz-notice" id="agenda-timezone" data-tz-notice></p>
       <ul class="ag-legend" id="agenda-legend" aria-label="Legenda"></ul>
       <p class="field-warning" id="truncated" hidden>Mais de 1.000 itens neste período: nem todos aparecem. Filtre por profissional.</p>
       <div id="agenda-error" hidden>
@@ -55,8 +55,9 @@
       </div>
     </section>
 
-    <dialog id="detail-dialog" class="ag-dialog" aria-labelledby="detail-title">
+    <dialog id="detail-dialog" class="ag-dialog" aria-labelledby="detail-title" aria-describedby="detail-timezone">
       <h2 id="detail-title">Agendamento</h2>
+      <p class="help tz-notice" id="detail-timezone" data-tz-notice></p>
       <p class="help" id="detail-status" role="status" aria-live="polite"></p>
       <p class="form-error" id="detail-alert" role="alert" tabindex="-1"></p>
       <dl class="ag-detail" id="detail-list" hidden>
@@ -78,9 +79,10 @@
       </div>
     </dialog>
 
-    <dialog id="cancel-dialog" class="ag-dialog" aria-labelledby="cancel-title" aria-describedby="cancel-question">
+    <dialog id="cancel-dialog" class="ag-dialog" aria-labelledby="cancel-title" aria-describedby="cancel-question cancel-timezone">
       <h2 id="cancel-title">Cancelar agendamento</h2>
       <p id="cancel-question"></p>
+      <p class="help tz-notice" id="cancel-timezone" data-tz-notice></p>
       <p class="form-error" id="cancel-alert" role="alert"></p>
       <div class="service-actions">
         <button type="button" id="cancel-back" autofocus>Voltar</button>

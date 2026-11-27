@@ -1,6 +1,7 @@
 // Textos fixos dos e-mails (AF-18, design 4.2), em pt-BR, no padrão de MANAGE_MESSAGES. As funções
 // só recebem dados do agendamento e do negócio, já formatados; nenhuma interpola outra coisa.
 import { formatChangePolicy, RESCHEDULES_PER_CHAIN_MAX } from '../../shared/appointments.js';
+import { timeZoneNotice } from '../../shared/timezone-names.js';
 
 export const EMAIL_MESSAGES = Object.freeze({
   subjectConfirmed: (service, ddmm, time, business) => `Agendamento confirmado: ${service} em ${ddmm}, ${time} · ${business}`,
@@ -15,7 +16,11 @@ export const EMAIL_MESSAGES = Object.freeze({
   introRescheduled: 'Seu agendamento foi remarcado.',
   introCancelledByOwner: 'O estabelecimento cancelou o seu agendamento.',
   notYouCancelled: 'Se você não fez este agendamento, desconsidere esta mensagem.',
-  timezone: (tz) => `Horários no fuso ${tz}.`,
+  // AF-23 (critério 15): o texto único do fuso.
+  timezone: (tz) => timeZoneNotice(tz),
+  // AF-23 (critério 13): DESCRIPTION do .ics. A frase é fixa, sem o fuso do cliente (decisão 5).
+  icsWhen: (when) => `Horário: ${when}`,
+  icsDeviceNote: 'O calendário pode mostrar este horário convertido para o fuso do seu aparelho.',
   before: 'Antes:',
   after: 'Agora:',
   cancelledWhen: 'Horário cancelado:',

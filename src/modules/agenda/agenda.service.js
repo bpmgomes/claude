@@ -89,7 +89,7 @@ export function createAgendaService({
   appointmentEvents = noAppointmentEvents,
   enqueueEmail = enqueueEmailDefault,
   emailEnabled,
-  now = () => new Date(),
+  now = () => new Date(), // utc
   log = noopLog,
 }) {
   async function businessOf(ownerId) {

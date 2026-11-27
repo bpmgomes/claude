@@ -122,7 +122,7 @@ export function createAppointmentsService({
   newToken = newManageToken,
   tokenIssuer = createManageTokenIssuer({ manageTokensRepository, publicBaseUrl, newToken }),
   enqueueEmail = enqueueEmailDefault,
-  now = () => new Date(),
+  now = () => new Date(), // utc
   log = noopLog,
   newId = randomUUID,
   engine = computeAvailability,

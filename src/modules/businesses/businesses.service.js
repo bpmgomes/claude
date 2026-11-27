@@ -48,7 +48,7 @@ export function createBusinessesService({
   imageLimiter = unlimitedImageLimiter,
   // eslint-disable-next-line no-unused-vars
   config,
-  now = () => new Date(),
+  now = () => new Date(), // utc
   log = noopLog,
 }) {
   async function getForOwner(ownerId) {

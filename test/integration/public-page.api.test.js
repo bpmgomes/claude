@@ -83,6 +83,14 @@ describe('página de referência (critérios 1, 2, 10, 16, 17, 22, 23)', () => {
     assert.ok(text.includes('(11) 91234-5678'));
   });
 
+  test('AF-23 (critério 7): o HTML real da rota já traz o aviso de fuso, antes da lista de horários', async () => {
+    const res = await get(app, `/${seed.slug}`);
+    const notice = 'Horários no fuso do estabelecimento: Horário de Brasília (America/Sao_Paulo).';
+    assert.ok(textOf(res.body).includes(notice));
+    const at = res.body.indexOf('id="bk-timezone"');
+    assert.ok(at > 0 && at < res.body.indexOf('<ul class="pp-slots" aria-label="Horários livres" aria-describedby="bk-timezone">'));
+  });
+
   test('logo e fotos usam as URLs de /media com width e height', async () => {
     const res = await get(app, `/${seed.slug}`);
     const imgs = tagsOf(res.body, 'img');

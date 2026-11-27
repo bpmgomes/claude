@@ -12,7 +12,6 @@ const {
   rangeOf,
   shift,
   titleOf,
-  timezoneLabel,
   dayHeading,
   hiddenLabel,
   describeItem,
@@ -109,11 +108,10 @@ describe('período e títulos', () => {
     assert.equal(shift('week', '2026-11-26', -1), '2026-11-19');
   });
 
-  test('titleOf, timezoneLabel e dayHeading', () => {
+  test('titleOf e dayHeading', () => {
     assert.equal(titleOf('week', '2026-11-23', '2026-11-29'), 'Semana de 23/11 a 29/11');
     assert.equal(titleOf('day', '2026-11-26', '2026-11-26'), 'quinta-feira, 26/11/2026');
     assert.equal(titleOf('day', '2026-11-29', '2026-11-29'), 'domingo, 29/11/2026');
-    assert.equal(timezoneLabel('America/Sao_Paulo'), 'Horários no fuso America/Sao_Paulo');
     assert.equal(dayHeading({ date: '2026-11-26', counts: { active: 6 } }), 'quinta-feira, 26/11 · 6 agendamentos');
     assert.equal(dayHeading({ date: '2026-11-23', counts: { active: 1 } }), 'segunda-feira, 23/11 · 1 agendamento');
     assert.equal(dayHeading({ date: '2026-11-28', counts: { active: 0 } }), 'sábado, 28/11 · nenhum agendamento');

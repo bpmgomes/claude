@@ -11,6 +11,7 @@ import {
 } from './public-booking-controller.js';
 import { ANY_PROFESSIONAL } from '/shared/availability.js';
 import { parseLocalDate } from '/shared/zoned-time.js';
+import { withTimeZone } from '/shared/timezone-names.js';
 
 export { suggestionLabel };
 
@@ -89,11 +90,14 @@ function timeOf(local, { end = false, date } = {}) {
   return time;
 }
 
-/** '2026-11-27T08:00' -> 'Você pode alterar até sex, 27/11 às 08:00'. */
-export function deadlineLabel(changeDeadline) {
+/**
+ * '2026-11-27T08:00' -> 'Você pode alterar até sex, 27/11 às 08:00 (Horário de Brasília, America/Sao_Paulo)'.
+ * AF-23 (critério 8): o fuso fica em linha no prazo, visível sem abrir o painel de remarcar.
+ */
+export function deadlineLabel(changeDeadline, timezone) {
   if (!isLocalDateTime(changeDeadline)) return '';
   const date = changeDeadline.slice(0, 10);
-  return `Você pode alterar até ${dayLabel(date, isoWeekdayOfDate(date))} às ${timeOf(changeDeadline)}`;
+  return `Você pode alterar até ${withTimeZone(`${dayLabel(date, isoWeekdayOfDate(date))} às ${timeOf(changeDeadline)}`, timezone)}`;
 }
 
 /** Mensagem do servidor só com o código esperado; senão, a fixa local. */
@@ -192,7 +196,7 @@ export function summaryOf(body) {
     phoneDisplay: text(business.phoneDisplay),
     pageUrl: safePageUrl(business.pageUrl),
     canChange: change.canChange === true,
-    deadline: deadlineLabel(change.changeDeadline),
+    deadline: deadlineLabel(change.changeDeadline, appointment.timezone),
     policy: text(change.policy),
     version: text(change.version),
     reschedule: {
@@ -274,10 +278,10 @@ export async function rescheduleAppointment(token, { start, professionalId, vers
   return res.ok ? okSummary(res) : failureOf(res, { start });
 }
 
-/** 'sex, 27/11 · 10:30 – 11:30 (America/Sao_Paulo)'. */
+/** 'sex, 27/11 · 10:30 – 11:30 (Horário de Brasília, America/Sao_Paulo)'. */
 export function rescheduleSummary(slot, { weekday, timezone }) {
   const date = String(slot.start).slice(0, 10);
-  return `${dayLabel(date, weekday)} · ${slot.label} – ${slot.endLabel} (${timezone})`;
+  return `${dayLabel(date, weekday)} · ${withTimeZone(`${slot.label} – ${slot.endLabel}`, timezone)}`;
 }
 
 /** Texto do status com a lista pronta. */

@@ -7,6 +7,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OUTBOX_INSERT_RE } from '../helpers/outbox-scan.js';
+import { callArgs } from '../helpers/time-scan.js';
 
 const SRC = fileURLToPath(new URL('../../src/', import.meta.url));
 
@@ -19,26 +20,10 @@ async function sources(dir = SRC, out = [], ext = /\.js$/) {
   return out;
 }
 
-/** Texto dos argumentos de cada chamada `.name(` (até o parêntese que fecha). */
-function callsOf(text, name) {
-  const calls = [];
-  const re = new RegExp(`\\.${name}\\(`, 'g');
-  for (let m = re.exec(text); m; m = re.exec(text)) {
-    let depth = 1;
-    let i = m.index + m[0].length;
-    for (; i < text.length && depth > 0; i++) {
-      if (text[i] === '(') depth += 1;
-      else if (text[i] === ')') depth -= 1;
-    }
-    calls.push(text.slice(m.index + m[0].length, i - 1));
-  }
-  return calls;
-}
-
 test('toda chamada de cancelIfConfirmed em src/ passa cancelledBy', async () => {
   const found = [];
   for (const { path, text } of await sources()) {
-    for (const args of callsOf(text, 'cancelIfConfirmed')) found.push({ path, ok: /\bcancelledBy\s*:/.test(args) });
+    for (const args of callArgs(text, 'cancelIfConfirmed')) found.push({ path, ok: /\bcancelledBy\s*:/.test(args) });
   }
   assert.ok(found.length >= 3, JSON.stringify(found));
   assert.deepEqual(found.filter((f) => !f.ok), []);

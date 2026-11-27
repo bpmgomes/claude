@@ -17,7 +17,7 @@ export function createPublicPageService({
   servicesRepository,
   professionalsRepository,
   config,
-  now = () => new Date(),
+  now = () => new Date(), // utc
 }) {
   return {
     /**

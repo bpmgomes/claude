@@ -30,7 +30,7 @@ export function parseTimeWindow(value) {
  * @param {{ max: number, timeWindow: number|string, now?: () => number }} options
  * @returns {((request: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => Promise<void>) & { size: () => number }}
  */
-export function createUserRateLimit({ max, timeWindow, now = Date.now }) {
+export function createUserRateLimit({ max, timeWindow, now = Date.now }) { // utc
   const windowMs = parseTimeWindow(timeWindow);
   /** @type {Map<string, { count: number, resetAt: number }>} */
   const buckets = new Map();

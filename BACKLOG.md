@@ -240,7 +240,7 @@ Passos para reproduzir: dois navegadores abrem o mesmo horário das 10:00 com a 
 Item proposital para avaliar se a equipe resolve concorrência no banco (constraint/lock) e não apenas no frontend.
 
 ### AF-23 · 🐞 Bug: agenda mostra horário errado para usuário em outro fuso
-Tipo: Bug · Prioridade: Média · Pontos: 2 · Status: TODO
+Tipo: Bug · Prioridade: Média · Pontos: 2 · Status: DONE
 
 Cliente em Manaus (UTC-4) vê horários de um salão em São Paulo (UTC-3) deslocados em 1 h. Esperado: sempre exibir no fuso do negócio, indicando o fuso na tela.
 

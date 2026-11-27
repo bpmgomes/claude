@@ -6,6 +6,7 @@ import { html } from '../../../http/html.js';
 import { formatDuration, formatServicePrice } from '../../../shared/services.js';
 import { formatPhone } from '../../../shared/validation.js';
 import { DEFAULT_TIME_ZONE } from '../../../shared/time-blocks.js';
+import { withTimeZone } from '../../../shared/timezone-names.js';
 import { changeWindow, MANAGE_PATH_PREFIX, RESCHEDULES_PER_CHAIN_MAX } from '../../../shared/appointments.js';
 import { buildIcs, icsUidOf } from '../../calendar/ics.js';
 import { EMAIL_MESSAGES as EM } from '../email-messages.js';
@@ -95,7 +96,8 @@ export function renderAppointmentEmail(input) {
     formatDuration(appointment.durationMinutes),
     formatServicePrice({ priceCents: appointment.priceCents, priceOnRequest }),
   );
-  const when = formatWhen(startMs, endMs, timeZone);
+  // AF-23 (critério 12): o fuso em linha em cada horário do corpo (o assunto não muda, decisão 4).
+  const when = withTimeZone(formatWhen(startMs, endMs, timeZone), timeZone);
   const professionalChanged = kind === EMAIL_KIND_RESCHEDULED && previous.professionalId !== appointment.professionalId;
   const professionalText = professionalChanged
     ? EM.professionalChanged(appointment.professionalName, previous.professionalName)
@@ -111,7 +113,7 @@ export function renderAppointmentEmail(input) {
       leadMinutes: business.cancellationLeadMinutes,
     });
     policyLines = window.canChange
-      ? [EM.policy(business.cancellationLeadMinutes), EM.deadline(formatShortWhen(window.deadlineMs, timeZone))]
+      ? [EM.policy(business.cancellationLeadMinutes), EM.deadline(withTimeZone(formatShortWhen(window.deadlineMs, timeZone), timeZone))]
       : [EM.deadlinePassed(phone)];
     if (sequence >= RESCHEDULES_PER_CHAIN_MAX) policyLines.push(EM.rescheduleExhausted(phone));
     else if (sequence === 0) policyLines.push(EM.rescheduleLimitFirst);
@@ -130,7 +132,7 @@ export function renderAppointmentEmail(input) {
   const whenLines =
     kind === EMAIL_KIND_RESCHEDULED
       ? [
-          [EM.before, formatWhen(Date.parse(previous.startsAt), Date.parse(previous.endsAt), timeZone)],
+          [EM.before, withTimeZone(formatWhen(Date.parse(previous.startsAt), Date.parse(previous.endsAt), timeZone), timeZone)],
           [EM.after, when],
         ]
       : [[cancelled ? EM.cancelledWhen : null, when]];
@@ -206,7 +208,8 @@ ${policyLines.map((line) => html`<p>${line}</p>
     endMs,
     summary: `${appointment.serviceName} - ${business.name}`,
     location: business.address,
-    description: `${EM.professionalLabel}: ${appointment.professionalName}\n${EM.phoneLabel}: ${phone}`,
+    // AF-23 (critério 13): o horário do salão com o fuso, para quem lê o arquivo sem o calendário.
+    description: [EM.icsWhen(when), `${EM.professionalLabel}: ${appointment.professionalName}`, `${EM.phoneLabel}: ${phone}`, EM.icsDeviceNote].join('\n'),
   });
 
   return { subject, text, html: htmlBody.text, ics: { content: ics, method: cancelled ? 'CANCEL' : 'PUBLISH' } };

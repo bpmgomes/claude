@@ -91,6 +91,12 @@ export function wallMinutes(v) {
   return Date.UTC(v.year, v.month - 1, v.day, v.hour || 0, v.minute || 0) / MINUTE_MS;
 }
 
+/** Instante -> ISO UTC. Fora daqui, src/shared/ e web/ não usam Date (AF-23, lint). */
+export const instantToIso = (ms) => new Date(ms).toISOString();
+
+/** ISO -> instante (NaN se inválido). */
+export const isoToInstant = (iso) => Date.parse(iso);
+
 /** Um formatador por fuso (criar Intl.DateTimeFormat é caro). */
 const formatters = new Map();
 

@@ -180,7 +180,7 @@ export async function buildApp(overrides = {}) {
   const emailConfig = resolveEmailConfig(fullConfig, { injected: Boolean(overrides.mailTransport) });
   const { conflictsTokenSecret: _secret, smtpPassword, ...publicConfig } = fullConfig;
   const config = Object.freeze({ ...publicConfig, email: Object.freeze(emailConfig) });
-  const now = overrides.now || (() => new Date());
+  const now = overrides.now || (() => new Date()); // utc
 
   const logger = {
     level: config.logLevel,

@@ -3,7 +3,7 @@
 // ./appointments.js fica FORA do grafo do navegador (orçamento do AF-09): a lista de status é
 // repetida aqui e um teste confere que é igual a APPOINTMENT_STATUSES. Datas são 'YYYY-MM-DD' locais
 // do negócio, tratadas como texto; nada aqui usa o fuso do processo nem do navegador.
-import { parseLocalDate, addLocalDays } from './zoned-time.js';
+import { parseLocalDate, addLocalDays, wallMinutes } from './zoned-time.js';
 import { PROFESSIONAL_ID_RE } from './professionals.js';
 
 export const AGENDA_RANGE_MAX_DAYS = 7;
@@ -58,7 +58,7 @@ export const CANCELLED_BY_LABELS = Object.freeze({
   reschedule: 'Remarcado pelo cliente',
 });
 
-const DAY_MS = 86_400_000;
+const MINUTES_PER_DAY = 1440;
 const UUID_LENGTH = 36;
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const own = (obj, key) => (Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : undefined);
@@ -78,7 +78,7 @@ export function displayKeyOf(item) {
 }
 
 /**
- * ISO 1 (segunda) a 7 (domingo) para 'YYYY-MM-DD'; 0 para data inválida. Date.UTC, sem fuso
+ * ISO 1 (segunda) a 7 (domingo) para 'YYYY-MM-DD'; 0 para data inválida. Dias corridos, sem fuso
  * (= isoWeekdayOf do motor, teste).
  * @param {unknown} date
  * @returns {number}
@@ -86,31 +86,28 @@ export function displayKeyOf(item) {
 export function isoWeekdayOfDate(date) {
   const parsed = parseLocalDate(date);
   if (!parsed.ok) return 0;
-  const { year, month, day } = parsed.value;
-  const js = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-  return js === 0 ? 7 : js;
+  // 1970-01-01 (dia 0) foi quinta-feira (ISO 4).
+  const days = wallMinutes(parsed.value) / MINUTES_PER_DAY;
+  return ((((days + 3) % 7) + 7) % 7) + 1;
 }
 
 /**
  * Segunda-feira da semana ISO da data (decisão 8 do Gerente). '' para data inválida. Pode cair em
- * 1999-12-27 (semana de 2000-01-01): calculada por Date.UTC, sem passar pelo parser.
+ * 1999-12-27 (semana de 2000-01-01): addLocalDays só valida a data de entrada.
  * @param {unknown} date
  * @returns {string}
  */
 export function startOfIsoWeek(date) {
   const weekday = isoWeekdayOfDate(date);
   if (weekday === 0) return '';
-  const { year, month, day } = parseLocalDate(date).value;
-  const d = new Date(Date.UTC(year, month - 1, day) - (weekday - 1) * DAY_MS);
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${String(d.getUTCFullYear()).padStart(4, '0')}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  return addLocalDays(date, -(weekday - 1));
 }
 
-/** Dias entre duas datas válidas (to − from), por Date.UTC. */
+/** Dias entre duas datas válidas (to − from), em minutos de parede. */
 function daysBetween(from, to) {
   const a = parseLocalDate(from).value;
   const b = parseLocalDate(to).value;
-  return Math.round((Date.UTC(b.year, b.month - 1, b.day) - Date.UTC(a.year, a.month - 1, a.day)) / DAY_MS);
+  return Math.round((wallMinutes(b) - wallMinutes(a)) / MINUTES_PER_DAY);
 }
 
 /**

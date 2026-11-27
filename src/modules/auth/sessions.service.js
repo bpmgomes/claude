@@ -6,7 +6,7 @@ export function hashToken(token) {
   return createHash('sha256').update(token).digest('hex');
 }
 
-export function createSessionsService({ sessionsRepository, config, now = () => new Date() }) {
+export function createSessionsService({ sessionsRepository, config, now = () => new Date() }) { // utc
   /** Prazo deslizante (inatividade) limitado pelo teto absoluto desde a criação. */
   function nextExpiry(nowMs, createdAtMs) {
     return new Date(

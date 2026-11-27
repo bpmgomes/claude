@@ -99,7 +99,7 @@ export function createManageService({
   appointmentEvents = noAppointmentEvents,
   enqueueEmail = enqueueEmailDefault,
   config,
-  now = () => new Date(),
+  now = () => new Date(), // utc
   log = noopLog,
 }) {
   const publicBaseUrl = config.publicBaseUrl;

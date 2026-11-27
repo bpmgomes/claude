@@ -176,7 +176,7 @@ export function resolveEmailConfig(config, { injected = false } = {}) {
  * @param {{ smtpPassword?: string|null, now?: () => Date }} [options]
  * @returns {import('./mail-transport.js').MailTransport|null}
  */
-export function createMailTransport(emailConfig, { smtpPassword = null, now = () => new Date() } = {}) {
+export function createMailTransport(emailConfig, { smtpPassword = null, now = () => new Date() } = {}) { // utc
   switch (emailConfig.transport) {
     case 'memory':
       return createMemoryMailTransport();

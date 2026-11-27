@@ -13,6 +13,7 @@ import {
   suggestionLabel,
   MANAGE_PAGE_MESSAGES as P,
 } from './manage-controller.js';
+import { timeZoneNotice } from '/shared/timezone-names.js';
 
 const root = document.querySelector('main.mg');
 if (root) start(root);
@@ -230,7 +231,7 @@ function start(main) {
       return;
     }
     const { day, timezone } = result;
-    $('.mg-timezone').textContent = timezone ? `Horários no fuso ${timezone}.` : '';
+    if (timezone) showTimeZone(timezone);
     if (day.slots.length === 0) {
       slotsStatus.textContent = P.emptyDay;
       main.dataset.slots = 'ready';
@@ -255,6 +256,11 @@ function start(main) {
     main.dataset.slots = 'ready';
   }
 
+  /** AF-23 (critério 8): todo aviso de fuso do painel pelo texto único. */
+  function showTimeZone(timezone) {
+    for (const el of main.querySelectorAll('[data-tz-notice]')) el.textContent = timeZoneNotice(timezone);
+  }
+
   function openReschedule() {
     if (!summary) return;
     hideAlert();
@@ -271,6 +277,8 @@ function start(main) {
     dateInput.max = maxDate;
     dateInput.value = summary.start.slice(0, 10) >= today ? summary.start.slice(0, 10) : today;
     $('.mg-reschedule-policy').textContent = summary.policy;
+    // O aviso aparece ANTES da primeira consulta (com o fuso do resumo) e é refeito com o da resposta.
+    showTimeZone(summary.timezone);
     show(rescheduleEl);
     refreshDay();
   }

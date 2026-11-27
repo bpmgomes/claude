@@ -26,7 +26,7 @@ export async function runMigrations(db, { dir = MIGRATIONS_DIR } = {}) {
       await tx.exec(sql);
       await tx.run('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)', [
         version,
-        new Date().toISOString(),
+        new Date().toISOString(), // utc
       ]);
     });
     done.push(version);

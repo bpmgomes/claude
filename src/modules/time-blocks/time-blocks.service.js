@@ -84,7 +84,7 @@ export function createTimeBlocksService({
   businessesRepository,
   appointments = noAppointments,
   conflictsTokenSecret,
-  now = () => new Date(),
+  now = () => new Date(), // utc
   log = noopLog,
 }) {
   if (typeof conflictsTokenSecret !== 'string' || conflictsTokenSecret.length === 0) {

@@ -28,7 +28,7 @@ export function createAuthService({
   businessesRepository,
   config,
   // eslint-disable-next-line no-unused-vars
-  now = () => new Date(),
+  now = () => new Date(), // utc
   verifyPassword = defaultVerifyPassword,
 }) {
   // Hash de referência com o mesmo custo dos hashes reais: o bcrypt roda também

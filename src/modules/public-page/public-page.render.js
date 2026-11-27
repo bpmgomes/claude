@@ -2,6 +2,7 @@
 // `html`, que escapa por padrão. Sem script inline, estilo inline nem handler inline: o único
 // JavaScript é o módulo de horários, do mesmo domínio, e os dados vão em atributos `data-*`.
 import { html } from '../../http/html.js';
+import { timeZoneNotice } from '../../shared/timezone-names.js';
 
 /**
  * CSP própria da página pública: script e fetch só do próprio domínio (módulo de horários do
@@ -32,6 +33,7 @@ export const PUBLIC_BOOKING_MODULES = Object.freeze([
   '/shared/customers.js',
   '/shared/availability.js',
   '/shared/zoned-time.js',
+  '/shared/timezone-names.js',
   '/shared/services.js',
   '/shared/validation.js',
   '/shared/slug.js',
@@ -204,7 +206,11 @@ export const SUCCESS_EMAIL_TEXT = 'Enviamos os detalhes para o seu e-mail.';
 const SUCCESS_EMAIL_LINE = html`<p class="pp-success-email">${SUCCESS_EMAIL_TEXT}</p>
 `;
 
-/** Seção de horários (AF-10, 4.4): oculta sem JavaScript, com o aviso do <noscript>. */
+/**
+ * Seção de horários (AF-10, 4.4): oculta sem JavaScript, com o aviso do <noscript>. AF-23 (critério 7):
+ * o aviso de fuso já vem no HTML, por `timeZoneNotice`, e a lista e as sugestões apontam para ele
+ * por `aria-describedby`.
+ */
 function booking(page, options) {
   const { business, booking: b } = page;
   return html`<div id="agendar">
@@ -221,13 +227,13 @@ ${page.professionals.map(professionalOption)}</select>
 <label for="bk-date">Data</label>
 <input id="bk-date" type="date" min="${b.today}" max="${b.maxDate}" value="${b.today}">
 </div>
-<p class="pp-timezone">Horários no fuso ${b.timezone}.</p>
+<p class="pp-timezone tz-notice" id="bk-timezone" data-tz-notice>${timeZoneNotice(b.timezone)}</p>
 <p class="pp-status" role="status" aria-live="polite"></p>
-<ul class="pp-slots" aria-label="Horários livres"></ul>
+<ul class="pp-slots" aria-label="Horários livres" aria-describedby="bk-timezone"></ul>
 <div class="pp-confirm" hidden>
 <p class="pp-selected"></p>
 <div class="pp-alert" role="alert" hidden></div>
-<div class="pp-suggestions" hidden><p class="pp-suggestions-title">Horários livres próximos</p><ul class="pp-suggestions-list"></ul></div>
+<div class="pp-suggestions" hidden><p class="pp-suggestions-title">Horários livres próximos</p><p class="pp-timezone tz-notice" id="bk-suggestions-timezone" data-tz-notice>${timeZoneNotice(b.timezone)}</p><ul class="pp-suggestions-list" aria-describedby="bk-suggestions-timezone"></ul></div>
 ${customerForm(business)}
 </div>
 </section>

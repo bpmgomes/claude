@@ -239,6 +239,9 @@ section h2 {
   overflow-wrap: anywhere;
 }
 
+/* AF-23: aviso de fuso (texto mais longo: Fernando de Noronha); um IANA não tem espaço. */
+.tz-notice { overflow-wrap: anywhere; }
+
 .pp-status {
   margin: 4px 0 12px;
   min-height: 1.5em;

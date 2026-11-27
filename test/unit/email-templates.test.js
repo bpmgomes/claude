@@ -69,7 +69,7 @@ describe('appointment_confirmed (critérios 12, 14 e 15)', () => {
       'Olá, Ana Cliente,',
       EM.introConfirmed,
       'sexta-feira, 27/11/2026, das 10:00 às 11:00',
-      'Horários no fuso America/Sao_Paulo.',
+      'Horários no fuso do estabelecimento: Horário de Brasília (America/Sao_Paulo).',
       'Corte (1 h, R$ 50,00)',
       'Profissional: Bia Lima',
       'Salão da Ana',
@@ -77,7 +77,7 @@ describe('appointment_confirmed (critérios 12, 14 e 15)', () => {
       '(11) 91234-5678',
       `Cancelar ou remarcar: ${MANAGE}`,
       'Você pode cancelar ou remarcar por este link até 2 h antes do horário.',
-      'Prazo: até sex, 27/11 às 08:00.',
+      'Prazo: até sex, 27/11 às 08:00 (Horário de Brasília, America/Sao_Paulo).',
       'Você pode remarcar online até 3 vezes.',
       EM.securityKeep,
       EM.securityNotYou,
@@ -215,10 +215,10 @@ describe('fuso (critério 33)', () => {
     const saved = process.env.TZ;
     const outputs = [];
     try {
-      for (const tz of ['UTC', 'Asia/Tokyo', 'America/Sao_Paulo']) {
+      for (const tz of ['UTC', 'Asia/Tokyo', 'America/Sao_Paulo', 'America/Manaus']) {
         process.env.TZ = tz;
         const r = render();
-        outputs.push([r.subject, r.text, r.html].join('\n'));
+        outputs.push([r.subject, r.text, r.html, r.ics.content].join('\n'));
       }
     } finally {
       if (saved === undefined) delete process.env.TZ;
@@ -233,7 +233,7 @@ describe('fuso (critério 33)', () => {
       appointment: { startsAt: '2026-11-27T16:00:00.000Z', endsAt: '2026-11-27T17:00:00.000Z' },
     });
     assert.ok(r.text.includes('sábado, 28/11/2026, das 01:00 às 02:00'), r.text);
-    assert.ok(r.text.includes('Horários no fuso Asia/Tokyo.'));
+    assert.ok(r.text.includes('Horários no fuso do estabelecimento: Asia/Tokyo.'));
     assert.equal(r.subject, 'Agendamento confirmado: Corte em 28/11, 01:00 · Salão da Ana');
   });
 });
@@ -248,7 +248,7 @@ describe('appointment_cancelled_by_owner (AF-14, critério 26)', () => {
     for (const text of [r.text, r.html]) {
       assert.ok(text.includes(EM.introCancelledByOwner));
       assert.ok(text.includes(EM.notYouCancelled));
-      assert.ok(text.includes('Horários no fuso America/Sao_Paulo.'));
+      assert.ok(text.includes('Horários no fuso do estabelecimento: Horário de Brasília (America/Sao_Paulo).'));
       assert.ok(text.includes('Bia Lima'));
       assert.equal(text.includes('/agendamento/'), false);
       assert.equal(text.includes(EM.securityKeep), false);
@@ -291,15 +291,117 @@ describe('appointment_cancelled_by_owner (AF-14, critério 26)', () => {
     const saved = process.env.TZ;
     const outputs = [];
     try {
-      for (const tz of ['UTC', 'Asia/Tokyo', 'America/Sao_Paulo']) {
+      for (const tz of ['UTC', 'Asia/Tokyo', 'America/Sao_Paulo', 'America/Manaus']) {
         process.env.TZ = tz;
         const r = owner();
-        outputs.push([r.subject, r.text, r.html].join('\n'));
+        outputs.push([r.subject, r.text, r.html, r.ics.content].join('\n'));
       }
     } finally {
       if (saved === undefined) delete process.env.TZ;
       else process.env.TZ = saved;
     }
     assert.equal(new Set(outputs).size, 1);
+  });
+});
+
+describe('AF-23: fuso em linha no corpo e no prazo, assunto igual, .ics com o horário do salão (critérios 12 e 13)', () => {
+  const SUFFIX = '(Horário de Brasília, America/Sao_Paulo)';
+  const NOTICE = 'Horários no fuso do estabelecimento: Horário de Brasília (America/Sao_Paulo).';
+  const previous = row({ id: '22222222-2222-4222-8222-222222222222', startsAt: '2026-11-27T12:00:00.000Z', endsAt: '2026-11-27T13:00:00.000Z', status: 'cancelled' });
+  const kinds = {
+    appointment_confirmed: () => render(),
+    appointment_cancelled: () => render({ kind: 'appointment_cancelled', manageUrl: undefined, appointment: { status: 'cancelled' } }),
+    appointment_rescheduled: () => render({ kind: 'appointment_rescheduled', previous, chain: { sequence: 1 } }),
+    appointment_cancelled_by_owner: () => render({ kind: 'appointment_cancelled_by_owner', manageUrl: undefined, appointment: { status: 'cancelled' } }),
+  };
+  /** Linhas de horário esperadas no texto puro, cada uma com o fuso na MESMA linha. */
+  const WHEN_LINES = {
+    appointment_confirmed: [`sexta-feira, 27/11/2026, das 10:00 às 11:00 ${SUFFIX}`],
+    appointment_cancelled: [`Horário cancelado: sexta-feira, 27/11/2026, das 10:00 às 11:00 ${SUFFIX}`],
+    appointment_rescheduled: [`Antes: sexta-feira, 27/11/2026, das 09:00 às 10:00 ${SUFFIX}`, `Agora: sexta-feira, 27/11/2026, das 10:00 às 11:00 ${SUFFIX}`],
+    appointment_cancelled_by_owner: [`Horário cancelado: sexta-feira, 27/11/2026, das 10:00 às 11:00 ${SUFFIX}`],
+  };
+  /** Assuntos de antes do AF-23, byte a byte (decisão 4 do Gerente: nunca levam o fuso). */
+  const SUBJECTS = {
+    appointment_confirmed: 'Agendamento confirmado: Corte em 27/11, 10:00 · Salão da Ana',
+    appointment_cancelled: 'Agendamento cancelado: Corte em 27/11, 10:00 · Salão da Ana',
+    appointment_rescheduled: 'Agendamento remarcado: Corte para 27/11, 10:00 · Salão da Ana',
+    appointment_cancelled_by_owner: 'Agendamento cancelado pelo estabelecimento: Corte em 27/11, 10:00 · Salão da Ana',
+  };
+
+  for (const [kind, make] of Object.entries(kinds)) {
+    test(`${kind}: cada horário com o fuso na mesma linha, a frase logo depois, o assunto sem fuso`, () => {
+      const r = make();
+      assert.equal(r.subject, SUBJECTS[kind]);
+      assert.doesNotMatch(r.subject, /fuso|Horário de|America\//);
+      const lines = r.text.split('\n');
+      const whenAt = WHEN_LINES[kind].map((line) => lines.indexOf(line));
+      assert.ok(whenAt.every((i) => i >= 0), `${kind}: ${r.text}`);
+      // A frase do fuso vem logo depois da última linha de horário (mesmo bloco).
+      assert.equal(lines[Math.max(...whenAt) + 1], NOTICE);
+      // HTML: mesmo texto, mesma linha (o mesmo <p>), com o escape da tag html.
+      for (const line of WHEN_LINES[kind]) {
+        const value = line.replace(/^(Antes:|Agora:|Horário cancelado:) /, '');
+        assert.ok(r.html.includes(`${escapeHtml(value)}</p>`), `${kind} html: ${value}`);
+      }
+      assert.ok(r.html.includes(`${escapeHtml(NOTICE)}</p>`));
+      if (kind === 'appointment_confirmed' || kind === 'appointment_rescheduled') {
+        const deadline = `Prazo: até sex, 27/11 às 08:00 ${SUFFIX}.`;
+        assert.ok(lines.includes(deadline), r.text);
+        assert.ok(r.html.includes(`<p>${escapeHtml(deadline)}</p>`));
+      }
+    });
+
+    test(`${kind}: .ics com o horário do salão e a frase da conversão, sem VTIMEZONE`, () => {
+      const r = make();
+      const ics = parseIcs(r.ics.content);
+      const description = ics.get('DESCRIPTION').replace(/\\n/g, '\n').replace(/\\([,;\\])/g, '$1');
+      const [first, ...rest] = description.split('\n');
+      assert.equal(first, `${EM.icsWhen(`sexta-feira, 27/11/2026, das 10:00 às 11:00 ${SUFFIX}`)}`);
+      assert.equal(rest.at(-1), EM.icsDeviceNote);
+      assert.ok(rest.includes('Profissional: Bia Lima'));
+      assert.equal(ics.get('DTSTART'), '20261127T130000Z');
+      assert.equal(ics.get('DTEND'), '20261127T140000Z');
+      assert.equal(r.ics.content.includes('VTIMEZONE'), false);
+      assert.equal(r.ics.content.includes('TZID'), false);
+      // Nenhum dado do cliente entra na DESCRIPTION.
+      for (const s of ['Ana Cliente', '21987654321', '(21) 98765-4321']) assert.equal(description.includes(s), false, s);
+    });
+  }
+
+  test('frase do .ics curta, fixa e sem dado pessoal', () => {
+    assert.equal(EM.icsDeviceNote, 'O calendário pode mostrar este horário convertido para o fuso do seu aparelho.');
+    assert.ok(EM.icsDeviceNote.length <= 80);
+  });
+
+  test('negócio em America/Manaus às 10:00 dá 14:00Z; em São Paulo, 13:00Z', () => {
+    const manaus = render({
+      business: { timezone: 'America/Manaus' },
+      appointment: { startsAt: '2026-11-27T14:00:00.000Z', endsAt: '2026-11-27T15:00:00.000Z' },
+    });
+    assert.equal(parseIcs(manaus.ics.content).get('DTSTART'), '20261127T140000Z');
+    assert.ok(manaus.text.includes('sexta-feira, 27/11/2026, das 10:00 às 11:00 (Horário de Manaus, America/Manaus)'), manaus.text);
+    assert.ok(manaus.text.includes('Horários no fuso do estabelecimento: Horário de Manaus (America/Manaus).'));
+    assert.equal(manaus.subject, 'Agendamento confirmado: Corte em 27/11, 10:00 · Salão da Ana');
+    assert.equal(parseIcs(render().ics.content).get('DTSTART'), '20261127T130000Z');
+  });
+
+  test('os quatro tipos: texto, HTML, assunto e .ics idênticos com TZ em UTC, America/Manaus e Asia/Tokyo', () => {
+    const saved = process.env.TZ;
+    const outputs = [];
+    try {
+      for (const tz of ['UTC', 'America/Manaus', 'Asia/Tokyo']) {
+        process.env.TZ = tz;
+        outputs.push(Object.values(kinds).map((make) => {
+          const r = make();
+          return [r.subject, r.text, r.html, r.ics.content].join('\n');
+        }));
+      }
+    } finally {
+      if (saved === undefined) delete process.env.TZ;
+      else process.env.TZ = saved;
+    }
+    assert.deepEqual(outputs[1], outputs[0]);
+    assert.deepEqual(outputs[2], outputs[0]);
   });
 });

@@ -15,6 +15,7 @@ import {
 } from './hours-controller.js';
 import { PROFESSIONAL_ID_RE } from '/shared/professionals.js';
 import { WEEKDAYS, WEEKDAY_LABELS, INTERVALS_PER_DAY_MAX } from '/shared/working-hours.js';
+import { timeZoneNotice } from '/shared/timezone-names.js';
 
 const START_OPTIONS = timeOptions({ forEnd: false });
 const END_OPTIONS = timeOptions({ forEnd: true });
@@ -99,7 +100,7 @@ function intervalsOf(weekday) {
   return day ? day.intervals : [];
 }
 
-function setDay(weekday, intervals) {
+function setWeekdayIntervals(weekday, intervals) {
   current = current.map((d) => (d.weekday === weekday ? { weekday, intervals } : d));
 }
 
@@ -117,7 +118,7 @@ function renderInterval(day, interval, n) {
   }
   const update = () => {
     const intervals = intervalsOf(day.weekday).map((i, k) => (k === n ? { start: start.value, end: end.value } : i));
-    setDay(day.weekday, intervals);
+    setWeekdayIntervals(day.weekday, intervals);
   };
   start.addEventListener('change', update);
   end.addEventListener('change', update);
@@ -130,7 +131,7 @@ function renderInterval(day, interval, n) {
   remove.className = 'button-secondary button-small';
   remove.textContent = 'Remover';
   remove.addEventListener('click', () => {
-    setDay(
+    setWeekdayIntervals(
       day.weekday,
       intervalsOf(day.weekday).filter((_, k) => k !== n),
     );
@@ -179,6 +180,8 @@ function renderDay(day) {
   const label = WEEKDAY_LABELS[day.weekday];
   const fieldset = document.createElement('fieldset');
   fieldset.className = 'hours-day';
+  // AF-23 (critério 16): cada dia (grupo) é descrito pelo aviso de fuso; um <div> sem papel não é anunciado.
+  fieldset.setAttribute('aria-describedby', 'hours-timezone');
   const legend = document.createElement('legend');
   legend.textContent = label;
   fieldset.append(legend);
@@ -194,7 +197,7 @@ function renderDay(day) {
   toggleLabel.textContent = 'Trabalha neste dia';
   works.append(toggle, toggleLabel);
   toggle.addEventListener('change', () => {
-    setDay(day.weekday, toggle.checked ? [{ ...NEW_INTERVAL }] : []);
+    setWeekdayIntervals(day.weekday, toggle.checked ? [{ ...NEW_INTERVAL }] : []);
     errors = new Map();
     render();
   });
@@ -214,7 +217,7 @@ function renderDay(day) {
     add.addEventListener('click', () => {
       const intervals = intervalsOf(day.weekday);
       if (intervals.length >= INTERVALS_PER_DAY_MAX) return;
-      setDay(day.weekday, [...intervals, { ...NEW_INTERVAL }]);
+      setWeekdayIntervals(day.weekday, [...intervals, { ...NEW_INTERVAL }]);
       render();
     });
     const copy = document.createElement('button');
@@ -367,6 +370,8 @@ if (business.status === 401) {
 } else if (business.ok) {
   nameEl.textContent = business.business.name;
   renderLogo(logoPreview, business.business.logoUrl);
+  // AF-23 (critério 11): a grade vale no fuso do negócio (GET /api/business já traz `timezone`).
+  document.getElementById('hours-timezone').textContent = timeZoneNotice(business.business.timezone);
   const list = await loadProfessionals({ fetchFn: browserFetch });
   if (!list.ok) {
     if (!handleRedirect(list)) pageStatus.textContent = list.message;

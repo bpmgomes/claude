@@ -11,7 +11,6 @@ import {
   rangeOf,
   shift,
   titleOf,
-  timezoneLabel,
   dayHeading,
   hiddenLabel,
   describeItem,
@@ -30,6 +29,7 @@ import {
 } from './agenda-controller.js';
 import { AGENDA_STATUS_DISPLAY, AGENDA_ALL_PROFESSIONALS, AGENDA_PAST_DAYS, AGENDA_FUTURE_DAYS } from '/shared/agenda.js';
 import { addLocalDays } from '/shared/zoned-time.js';
+import { timeZoneNotice } from '/shared/timezone-names.js';
 
 const navigate = (url) => window.location.assign(url);
 const $ = (id) => document.getElementById(id);
@@ -80,6 +80,8 @@ const detailClose = $('detail-close');
 
 const cancelDialog = $('cancel-dialog');
 const cancelQuestionEl = $('cancel-question');
+const detailTimezoneEl = $('detail-timezone');
+const cancelTimezoneEl = $('cancel-timezone');
 const cancelAlert = $('cancel-alert');
 const cancelBack = $('cancel-back');
 const cancelConfirm = $('cancel-confirm');
@@ -87,6 +89,8 @@ const cancelConfirm = $('cancel-confirm');
 const state = { ...parseAgendaUrl(window.location.search), includeCancelled: false };
 /** Último `now` do servidor ('YYYY-MM-DDTHH:MM', hora local do negócio). */
 let lastNow = null;
+/** Fuso da última leitura da agenda (aviso do detalhe enquanto ele carrega). */
+let lastTimezone = null;
 /** Id do agendamento cujo botão abriu o detalhe (o foco volta para ele no `close`). */
 let openerId = null;
 /** Detalhe aberto (`{ appointment, emailEnabled, ... }`). */
@@ -174,7 +178,8 @@ function renderItem(item, date, showProfessional) {
 function render(body) {
   const { from, to } = body;
   title.textContent = titleOf(state.view, from, to);
-  timezoneEl.textContent = timezoneLabel(body.timezone);
+  lastTimezone = body.timezone;
+  timezoneEl.textContent = timeZoneNotice(body.timezone);
   truncatedEl.hidden = body.truncated !== true;
   const showProfessional = !state.professional;
   let total = 0;
@@ -191,6 +196,7 @@ function render(body) {
     total += items.length;
     if (items.length > 0) {
       const ul = element('ul', { className: 'ag-list' });
+      ul.setAttribute('aria-describedby', 'agenda-timezone');
       ul.append(...items.map((item) => renderItem(item, day.date, showProfessional)));
       sec.append(ul);
     }
@@ -302,6 +308,9 @@ function clearDetail() {
 
 function fillDetail(body) {
   currentDetail = body;
+  // AF-23 (critério 9): os diálogos são modais e cobrem o cabeçalho; repetem o fuso do detalhe.
+  detailTimezoneEl.textContent = timeZoneNotice(body.timezone);
+  cancelTimezoneEl.textContent = timeZoneNotice(body.timezone);
   const a = body.appointment;
   const d = describeItem({ type: 'appointment', status: a.status, cancelled: a.cancelled }, {});
   const situation = [d.statusLabel, cancelledLabel(body)].filter(Boolean).join(' · ');
@@ -334,6 +343,7 @@ async function openDetail(id) {
   openerId = id;
   currentDetail = null;
   clearDetail();
+  detailTimezoneEl.textContent = timeZoneNotice(lastTimezone);
   detailStatus.textContent = M.detailLoading;
   if (!detailDialog.open) detailDialog.showModal();
   const result = await loadAppointment(id, { fetchFn: browserFetch });

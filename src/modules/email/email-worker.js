@@ -76,7 +76,7 @@ export function createEmailWorker(deps) {
     intervalMs,
     batchSize = EMAIL_BATCH_SIZE,
     render = renderAppointmentEmail,
-    now = () => new Date(),
+    now = () => new Date(), // utc
     random = Math.random,
     timers = { setTimeout, clearTimeout },
     sendTimeoutMs = EMAIL_SEND_TIMEOUT_MS,

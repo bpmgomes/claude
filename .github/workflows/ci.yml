@@ -62,6 +62,7 @@ jobs:
         include:
           - { tz: UTC, label: utc }
           - { tz: Asia/Tokyo, label: tokyo }
+          - { tz: America/Manaus, label: manaus }   # AF-23, critério 4
     env:
       TZ: ${{ matrix.tz }}
     steps:
@@ -90,6 +91,7 @@ jobs:
         include:
           - { tz: UTC, label: utc }
           - { tz: Asia/Tokyo, label: tokyo }
+          - { tz: America/Manaus, label: manaus }   # AF-23, critério 4
     env:
       TZ: ${{ matrix.tz }}
     steps:

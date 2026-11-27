@@ -17,7 +17,7 @@ export function emlFileNameOf(messageId) {
 /**
  * @param {{ dir: string, now?: () => Date }} options
  */
-export function createFileMailTransport({ dir, now = () => new Date() }) {
+export function createFileMailTransport({ dir, now = () => new Date() }) { // utc
   let ready = null;
 
   async function ensureDir() {

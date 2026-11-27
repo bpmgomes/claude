@@ -24,6 +24,7 @@ import {
 } from './customer-form-controller.js';
 import { ANY_PROFESSIONAL, AVAILABILITY_MESSAGES, BOOKING_HORIZON_DAYS } from '/shared/availability.js';
 import { addLocalDays, parseLocalDate } from '/shared/zoned-time.js';
+import { timeZoneNotice } from '/shared/timezone-names.js';
 
 /** UUID v4 por tentativa (critério 25); fora de contexto seguro, sem chave (o cabeçalho é opcional). */
 const newAttemptKey = () => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : '');
@@ -94,7 +95,6 @@ function start(root, customer) {
   const serviceSelect = root.querySelector('#bk-service');
   const professionalSelect = root.querySelector('#bk-professional');
   const dateInput = root.querySelector('#bk-date');
-  const timezoneEl = root.querySelector('.pp-timezone');
   const status = root.querySelector('.pp-status');
   const list = root.querySelector('.pp-slots');
   const confirm = root.querySelector('.pp-confirm');
@@ -221,7 +221,8 @@ function start(root, customer) {
   function applyServerClock(result) {
     if (result.timezone) {
       timezone = result.timezone;
-      timezoneEl.textContent = `Horários no fuso ${timezone}.`;
+      // AF-23: todo aviso de fuso da seção (lista e sugestões) pelo texto único.
+      for (const el of root.querySelectorAll('[data-tz-notice]')) el.textContent = timeZoneNotice(timezone);
     }
     const today = result.now.slice(0, 10);
     if (parseLocalDate(today).ok) {

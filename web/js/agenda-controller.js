@@ -102,11 +102,6 @@ export function titleOf(view, from, to) {
   return `${WEEKDAYS[isoWeekdayOfDate(from)] || ''}, ${ddmmyyyy(from)}`;
 }
 
-/** C-11: o identificador IANA, como nos e-mails do AF-18. */
-export function timezoneLabel(tz) {
-  return `Horários no fuso ${str(tz)}`;
-}
-
 /** Cabeçalho do dia: "quinta-feira, 26/11 · 6 agendamentos". */
 export function dayHeading(day) {
   const n = Number.isInteger(day?.counts?.active) ? day.counts.active : 0;

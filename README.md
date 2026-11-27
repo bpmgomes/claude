@@ -260,6 +260,26 @@ Chrome e Firefox aceitam cookie `Secure` em `http://localhost`. Em outro navegad
 - **Risco aberto (R1, decisão do dono do produto antes do deploy)**: alguém pode criar agendamentos com o e-mail de terceiros (até 10 por minuto por IP) e cada cancelamento do dono manda um e-mail a esse endereço. Atenuantes: texto neutro, teto de 10 e-mails por destinatário em 24 h, limite de 3 futuros por e-mail/telefone e `agendaCancel`. Monitore `appointment_created`, `appointment_limit_reached` e `appointment_cancelled_by_owner`.
 - Logs: `appointment_cancelled_by_owner`, `appointment_owner_cancel_repeated`, `appointment_owner_cancel_refused` (com `reason`) e `agenda_failed`, só com ids e códigos.
 
+## Fuso dos horários (AF-23)
+
+Toda tela, e-mail e `.ics` mostra os horários **no fuso do estabelecimento**, nunca no do aparelho,
+e diz qual é: "Horários no fuso do estabelecimento: Horário de Brasília (America/Sao_Paulo)." O
+texto vem de uma só função, `src/shared/timezone-names.js` (tabela fixa dos 16 fusos do Brasil;
+fora dela, o identificador IANA). O `.ics` continua em UTC; a `DESCRIPTION` traz o horário do
+salão e avisa que o calendário pode convertê-lo para o fuso do aparelho.
+
+- `test/unit/timezone-scan.test.js` (no `npm test`) falha se `web/` ou `src/` usarem relógio ou fuso
+  local (`new Date()`, `Date.now`, `getHours`, `toLocale*`, `valueAsDate`, `Intl.DateTimeFormat` sem
+  `timeZone` e outros). Fora de `src/shared/`, só linhas com `// utc`, contadas em `UTC_MARKED`.
+  Uma marca nova exige atualizar o mapa no mesmo PR. A varredura também impede montar o texto do
+  fuso fora de `timezone-names.js`.
+- O `npm run lint` tem a mesma proibição por AST em `web/**` e `src/shared/**` (exceto
+  `zoned-time.js`): nenhuma referência a `Date`, `Intl.DateTimeFormat`, `toLocale*String` nem aos
+  getters e setters locais, por qualquer forma de acesso (`test/unit/timezone-lint.test.js`).
+- `test/browser/timezone.e2e.js` (no `npm run test:e2e`) compara byte a byte as telas com o
+  navegador em `America/Manaus`, `Asia/Tokyo`, `America/New_York` e `Pacific/Kiritimati` com a
+  referência `America/Sao_Paulo`, e testa o horário de verão na tela.
+
 ## CI
 
 O workflow `.github/workflows/ci.yml` (GitHub Actions) roda em todo pull request (qualquer base),
@@ -270,8 +290,8 @@ em push para `claude/project-thread-5e1ja7` e `main`, manualmente (`workflow_dis
 | Job | PR | Push | Semanal | O que faz |
 |---|---|---|---|---|
 | `lint` | sim | sim | não | `npm run lint` |
-| `test (UTC)`, `test (Asia/Tokyo)` | sim | sim | não | `npm test` e `npm run test:coverage:availability` com `TZ` do job |
-| `e2e (UTC)`, `e2e (Asia/Tokyo)` | sim | sim | não | `npm run test:e2e` no Chromium; em falha, a saída vai como artefato (7 dias) |
+| `test (UTC)`, `test (Asia/Tokyo)`, `test (America/Manaus)` | sim | sim | não | `npm test` e `npm run test:coverage:availability` com `TZ` do job |
+| `e2e (UTC)`, `e2e (Asia/Tokyo)`, `e2e (America/Manaus)` | sim | sim | não | `npm run test:e2e` no Chromium; em falha, a saída vai como artefato (7 dias) |
 | `build-check` | sim | sim | não | `npm run smoke` com um `CONFLICTS_TOKEN_SECRET` gerado no job |
 | `audit` | sim | sim | sim | `npm audit` (informativo) e `npm audit --omit=dev --audit-level=high` (decide o job) |
 | `perf` | não | sim | não | `npm run perf`, informativo (`continue-on-error`); relatório como artefato por 30 dias |
@@ -287,10 +307,12 @@ npm ci
 npm run lint
 npm test
 TZ=Asia/Tokyo npm test
+TZ=America/Manaus npm test
 npm run test:coverage:availability
 TZ=Asia/Tokyo npm run test:coverage:availability
 npm run test:e2e
 TZ=Asia/Tokyo npm run test:e2e
+TZ=America/Manaus npm run test:e2e
 npm run smoke
 npm audit --omit=dev --audit-level=high
 npm run perf

@@ -63,7 +63,7 @@ export function describeBusiness(name) {
  *   (padrão Date.now()); `booking.today` é a data local do negócio nesse instante
  * @returns {PublicPage}
  */
-export function toPublicPage({ business, services, professionals }, { publicBaseUrl, nowMs = Date.now() }) {
+export function toPublicPage({ business, services, professionals }, { publicBaseUrl, nowMs = Date.now() }) { // utc
   const listed = Array.isArray(professionals) ? professionals : [];
   const active = Array.isArray(services) ? services.filter((s) => s.active !== false) : [];
 

@@ -6,6 +6,7 @@ import { serverFieldErrors } from './customer-form-controller.js';
 import { ANY_PROFESSIONAL, AVAILABILITY_MESSAGES } from '/shared/availability.js';
 import { SERVICE_ID_RE } from '/shared/services.js';
 import { parseLocalDate } from '/shared/zoned-time.js';
+import { withTimeZone } from '/shared/timezone-names.js';
 
 /** Mensagens fixas da tela (nenhuma interpola texto do servidor, exceto as de campo, também fixas). */
 export const BOOKING_MESSAGES = Object.freeze({
@@ -192,7 +193,7 @@ export function dayLabel(date, weekday) {
 }
 
 /**
- * 'Corte · sex, 27/11 · 09:00 – 10:00 (America/Sao_Paulo)'.
+ * 'Corte · sex, 27/11 · 09:00 – 10:00 (Horário de Brasília, America/Sao_Paulo)' (sufixo por withTimeZone, AF-23).
  * @param {{ start: string, end: string, label?: string, endLabel?: string }} slot
  * @param {{ serviceName: string, timezone: string, weekday: number }} options
  */
@@ -200,7 +201,7 @@ export function selectedSummary(slot, { serviceName, timezone, weekday }) {
   const date = String(slot.start).slice(0, 10);
   const from = slot.label || timeOf(slot.start);
   const to = slot.endLabel || timeOf(slot.end, { end: true, date });
-  return `${serviceName} · ${dayLabel(date, weekday)} · ${from} – ${to} (${timezone})`;
+  return `${serviceName} · ${dayLabel(date, weekday)} · ${withTimeZone(`${from} – ${to}`, timezone)}`;
 }
 
 /** Estado vazio (critério 29). */
@@ -363,7 +364,7 @@ export function successDetails(appointment) {
   const short = WEEKDAY_SHORT[weekday] || '';
   const dmy = isLocalDateTime(start) ? `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}` : '';
   const hours =
-    isLocalDateTime(start) && isLocalDateTime(end) ? `${timeOf(start)} – ${timeOf(end, { end: true, date })} (${text(a.timezone)})` : '';
+    isLocalDateTime(start) && isLocalDateTime(end) ? withTimeZone(`${timeOf(start)} – ${timeOf(end, { end: true, date })}`, a.timezone) : '';
   const serviceParts = [text(service.name), text(service.durationLabel), text(service.priceLabel)].filter(Boolean);
   return [
     { label: 'Data', value: dmy ? (short ? `${short}, ${dmy}` : dmy) : '' },

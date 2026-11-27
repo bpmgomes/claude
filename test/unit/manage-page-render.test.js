@@ -20,3 +20,16 @@ test('MANAGE_PAGE_HTML: um módulo, o CSS público, noindex, sem inline nem recu
   const fresh = await import(`../../src/modules/appointments/manage-page.render.js?again=${Date.now()}`);
   assert.equal(Buffer.compare(fresh.MANAGE_PAGE_HTML, MANAGE_PAGE_HTML), 0, 'mesmos bytes em duas cargas');
 });
+
+test('AF-23 (critérios 8 e 16): aviso de fuso do painel de remarcar, ligado à lista e às sugestões', () => {
+  const html = MANAGE_PAGE_HTML.toString('utf8');
+  const notice = tagsOf(html, 'p').find((p) => p.id === 'mg-timezone');
+  assert.ok(notice);
+  assert.equal(notice.class, 'pp-timezone mg-timezone tz-notice');
+  assert.equal('data-tz-notice' in notice, true);
+  const lists = tagsOf(html, 'ul').filter((u) => u.class === 'pp-slots mg-slots' || u.class === 'pp-suggestions-list mg-suggestions-list');
+  assert.equal(lists.length, 2);
+  for (const ul of lists) assert.equal(ul['aria-describedby'], 'mg-timezone');
+  // O HTML continua fixo e sem fuso (não depende do token, AF-12 critério 13): o texto vem do JS.
+  assert.doesNotMatch(html, /America\//);
+});

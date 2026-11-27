@@ -11,6 +11,8 @@ import {
   wallMinutes,
   localToInstant,
   instantToLocal,
+  instantToIso,
+  isoToInstant,
 } from './zoned-time.js';
 
 export const TIME_BLOCK_STEP_MINUTES = 15;
@@ -150,8 +152,8 @@ export function validateTimeBlockInput(input, { timeZone = DEFAULT_TIME_ZONE, no
       if (e.ms <= s.ms) fields.end = M.endBeforeStart;
       else if (Number.isFinite(nowMs) && e.ms <= nowMs) fields.end = M.endInPast;
       else {
-        startsAt = new Date(s.ms).toISOString();
-        endsAt = new Date(e.ms).toISOString();
+        startsAt = instantToIso(s.ms);
+        endsAt = instantToIso(e.ms);
       }
     }
   }
@@ -214,11 +216,11 @@ export function validateListQuery(query, { timeZone = DEFAULT_TIME_ZONE } = {}) 
       else {
         const startMs = localToInstant({ ...fromDate.value, hour: 0, minute: 0 }, timeZone).ms;
         const next = parseLocalDate(addLocalDays(to, 1));
-        // 2099-12-31 + 1 sai da faixa do parser: a aritmética é a mesma (Date.UTC).
+        // 2099-12-31 + 1 sai da faixa do parser: a aritmética é a mesma (dias corridos).
         const nextValue = next.ok ? next.value : { year: 2100, month: 1, day: 1 };
         const endMs = localToInstant({ ...nextValue, hour: 0, minute: 0 }, timeZone).ms;
-        fromIso = new Date(startMs).toISOString();
-        toIso = new Date(endMs).toISOString();
+        fromIso = instantToIso(startMs);
+        toIso = instantToIso(endMs);
       }
     }
   }
@@ -235,8 +237,8 @@ export function validateListQuery(query, { timeZone = DEFAULT_TIME_ZONE } = {}) 
  * @param {string} timeZone
  */
 export function toOwnerTimeBlock(row, timeZone) {
-  const start = instantToLocal(Date.parse(row.startsAt), timeZone);
-  const end = instantToLocal(Date.parse(row.endsAt), timeZone);
+  const start = instantToLocal(isoToInstant(row.startsAt), timeZone);
+  const end = instantToLocal(isoToInstant(row.endsAt), timeZone);
   return {
     id: row.id,
     professional: row.professionalId ? { id: row.professionalId, name: row.professionalName ?? '' } : null,
@@ -260,8 +262,8 @@ const str = (v) => (typeof v === 'string' ? v : '');
  */
 export function toOwnerConflict(item, timeZone) {
   return {
-    start: instantToLocal(Date.parse(item.startsAt), timeZone),
-    end: instantToLocal(Date.parse(item.endsAt), timeZone),
+    start: instantToLocal(isoToInstant(item.startsAt), timeZone),
+    end: instantToLocal(isoToInstant(item.endsAt), timeZone),
     serviceName: str(item.serviceName),
     professionalName: str(item.professionalName),
     customerName: str(item.customerName),

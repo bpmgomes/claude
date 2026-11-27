@@ -31,14 +31,15 @@
           <label for="all-day">Dia inteiro</label>
         </div>
 
+        <p class="help tz-notice" id="tb-form-timezone" data-tz-notice></p>
         <div class="time-block-row">
           <div class="field">
             <label for="start-date" id="start-date-label">Início</label>
-            <input id="start-date" name="startDate" type="date" required aria-describedby="start-error">
+            <input id="start-date" name="startDate" type="date" required aria-describedby="tb-form-timezone start-error">
           </div>
           <div class="field" id="start-time-field">
             <label for="start-time">Hora de início</label>
-            <select id="start-time" name="startTime"></select>
+            <select id="start-time" name="startTime" aria-describedby="tb-form-timezone"></select>
           </div>
         </div>
         <p class="field-error" id="start-error" aria-live="polite"></p>
@@ -46,11 +47,11 @@
         <div class="time-block-row">
           <div class="field">
             <label for="end-date" id="end-date-label">Fim</label>
-            <input id="end-date" name="endDate" type="date" required aria-describedby="end-error">
+            <input id="end-date" name="endDate" type="date" required aria-describedby="tb-form-timezone end-error">
           </div>
           <div class="field" id="end-time-field">
             <label for="end-time">Hora de fim</label>
-            <select id="end-time" name="endTime"></select>
+            <select id="end-time" name="endTime" aria-describedby="tb-form-timezone"></select>
           </div>
         </div>
         <p class="field-error" id="end-error" aria-live="polite"></p>
@@ -85,7 +86,8 @@
         <h2 id="conflicts-title" class="section-title">Há agendamentos neste período</h2>
         <p class="field-warning" id="conflicts-changed" aria-live="polite"></p>
         <p id="conflicts-summary"></p>
-        <ul id="conflicts-list" class="service-list"></ul>
+        <p class="help tz-notice" id="tb-conflicts-timezone" data-tz-notice></p>
+        <ul id="conflicts-list" class="service-list" aria-describedby="tb-conflicts-timezone"></ul>
         <p class="help">Bloquear não cancela nem move esses agendamentos. Resolva cada um depois.</p>
         <div class="service-actions">
           <button type="button" id="confirm-button">Bloquear mesmo assim</button>
@@ -94,6 +96,7 @@
       </section>
 
       <h2 class="section-title list-filter">Bloqueios</h2>
+      <p class="help tz-notice" id="tb-list-timezone" data-tz-notice></p>
       <div class="time-block-row">
         <div class="field">
           <label for="filter-professional">Mostrar</label>
@@ -114,7 +117,7 @@
 
       <p class="help" id="empty-state" hidden></p>
       <p class="help" id="truncated" hidden>Mostrando os primeiros 500 bloqueios. Use um período menor.</p>
-      <ul id="time-block-list" class="service-list"></ul>
+      <ul id="time-block-list" class="service-list" aria-describedby="tb-list-timezone"></ul>
     </section>
 
     <p class="secondary-link"><a href="/agenda">Agenda</a> · <a href="/horarios">Horários</a> · <a href="/profissionais">Profissionais</a></p>

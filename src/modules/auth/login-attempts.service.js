@@ -22,7 +22,7 @@ export function attemptKey(email, ip) {
   return createHash('sha256').update(`${email}\n${normalizeIp(ip)}`).digest('hex');
 }
 
-export function createLoginAttemptsService({ db, loginAttemptsRepository, config, now = () => new Date() }) {
+export function createLoginAttemptsService({ db, loginAttemptsRepository, config, now = () => new Date() }) { // utc
   const { maxFailures, lockMinutes } = config.loginLock;
 
   return {

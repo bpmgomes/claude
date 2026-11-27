@@ -447,7 +447,7 @@ describe('horários disponíveis (AF-10, critérios 22 e 28 a 30)', () => {
         for (const h of info.fields) assert.ok(h >= 44, `campo com ${h} px`);
         assert.ok(info.scrollWidth <= info.vw, `scrollWidth ${info.scrollWidth} > ${info.vw}`);
         assert.deepEqual(info.overflowing, []);
-        assert.equal(info.timezone, 'Horários no fuso America/Sao_Paulo.');
+        assert.equal(info.timezone, 'Horários no fuso do estabelecimento: Horário de Brasília (America/Sao_Paulo).');
       } finally {
         await context.close();
       }
@@ -470,7 +470,7 @@ describe('horários disponíveis (AF-10, critérios 22 e 28 a 30)', () => {
       assert.equal(await confirm.isDisabled(), false);
       assert.equal(await confirm.textContent(), 'Confirmar agendamento');
       const end = `09:${String(service.durationMinutes % 60).padStart(2, '0')}`;
-      assert.equal(await page.locator('.pp-selected').textContent(), `${service.name} · sex, 27/11 · 09:00 – ${end} (America/Sao_Paulo)`);
+      assert.equal(await page.locator('.pp-selected').textContent(), `${service.name} · sex, 27/11 · 09:00 – ${end} (Horário de Brasília, America/Sao_Paulo)`);
       assert.equal(await page.locator('#confirmar-aviso').count(), 0);
       const box = await confirm.boundingBox();
       assert.ok(box.width >= 44 && box.height >= 44);

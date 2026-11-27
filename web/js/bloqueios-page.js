@@ -16,6 +16,7 @@ import {
   STILL_BOOKED_MESSAGE,
 } from './time-blocks-controller.js';
 import { TIME_BLOCK_MESSAGES } from '/shared/time-blocks.js';
+import { timeZoneNotice } from '/shared/timezone-names.js';
 
 const TIMES = timeOptions();
 const ALL_VALUE = '*';
@@ -286,6 +287,8 @@ async function refreshList() {
     return null;
   }
   timeZone = result.timezone;
+  // AF-23 (critério 10): formulário, lista e conflitos dizem o fuso do negócio, pelo texto único.
+  for (const el of section.querySelectorAll('[data-tz-notice]')) el.textContent = timeZoneNotice(timeZone);
   list.replaceChildren(...result.timeBlocks.map(renderItem));
   const filtered = filterProfessional.value !== '' || filterFrom.value !== '' || filterTo.value !== '';
   emptyState.hidden = result.timeBlocks.length > 0;

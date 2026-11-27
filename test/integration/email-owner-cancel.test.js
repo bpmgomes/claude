@@ -41,7 +41,7 @@ describe('e-mail appointment_cancelled_by_owner (critérios 25 a 27)', () => {
     for (const text of [mail.text, mail.html]) {
       assert.ok(text.includes(EM.introCancelledByOwner));
       assert.ok(text.includes(EM.notYouCancelled));
-      assert.ok(text.includes('Horários no fuso America/Sao_Paulo.'));
+      assert.ok(text.includes('Horários no fuso do estabelecimento: Horário de Brasília (America/Sao_Paulo).'));
       assert.ok(text.includes('Corte'));
       assert.ok(text.includes('Ana Souza'));
       assert.ok(text.includes('(11) 91234-5678'));

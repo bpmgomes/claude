@@ -40,7 +40,9 @@ test('1.000 tokens: distintos, sem prefixo de 8 comum e sem ordem crescente (cri
 });
 
 test('o token não contém id, e-mail nem início usados na reserva', () => {
-  const values = ['3b241101-e2bb-4255-8caf-4136c566a962', 'ana@example.com', '2026-11-27T10:00', '2026', 'ana'];
+  // Só os valores completos: trechos curtos ('ana', '2026') aparecem por acaso num token aleatório de
+  // 43 caracteres (cerca de 3% das execuções) e deixavam o teste intermitente (AF-23, pedido do Gerente).
+  const values = ['3b241101-e2bb-4255-8caf-4136c566a962', 'ana@example.com', '2026-11-27T10:00', '2026-11-27T13:00:00.000Z'];
   for (let i = 0; i < 200; i++) {
     const { token } = newManageToken();
     for (const v of values) assert.equal(token.includes(v), false);

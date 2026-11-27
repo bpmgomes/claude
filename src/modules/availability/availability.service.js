@@ -83,7 +83,7 @@ export function createAvailabilityService({
   workingHoursRepository,
   timeBlocksRepository,
   appointments = noAppointments,
-  now = () => new Date(),
+  now = () => new Date(), // utc
   log = noopLog,
   engine = computeAvailability,
   perfNow = () => performance.now(),

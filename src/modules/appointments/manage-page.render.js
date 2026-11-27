@@ -62,10 +62,10 @@ const PAGE = html`<!doctype html>
 <label for="mg-date">Data</label>
 <input id="mg-date" type="date">
 </div>
-<p class="pp-timezone mg-timezone"></p>
+<p class="pp-timezone mg-timezone tz-notice" id="mg-timezone" data-tz-notice></p>
 <p class="pp-status mg-slots-status" role="status" aria-live="polite"></p>
-<ul class="pp-slots mg-slots" aria-label="Horários livres"></ul>
-<div class="pp-suggestions mg-suggestions" hidden><p class="pp-suggestions-title">Horários livres próximos</p><ul class="pp-suggestions-list mg-suggestions-list"></ul></div>
+<ul class="pp-slots mg-slots" aria-label="Horários livres" aria-describedby="mg-timezone"></ul>
+<div class="pp-suggestions mg-suggestions" hidden><p class="pp-suggestions-title">Horários livres próximos</p><ul class="pp-suggestions-list mg-suggestions-list" aria-describedby="mg-timezone"></ul></div>
 <div class="mg-confirm" hidden>
 <p class="pp-selected mg-selected"></p>
 <button type="button" class="pp-confirm-button mg-reschedule-confirm">Confirmar remarcação</button>

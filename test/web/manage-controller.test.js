@@ -94,14 +94,15 @@ describe('URL e token', () => {
     try {
       for (const tz of ['UTC', 'Asia/Tokyo', 'America/Sao_Paulo']) {
         process.env.TZ = tz;
-        seen.push(deadlineLabel('2026-11-27T08:00'));
+        seen.push(deadlineLabel('2026-11-27T08:00', 'America/Sao_Paulo'));
       }
     } finally {
       if (original === undefined) delete process.env.TZ;
       else process.env.TZ = original;
     }
     assert.equal(new Set(seen).size, 1);
-    assert.match(seen[0], /^Você pode alterar até .*27\/11 às 08:00$/);
+    assert.match(seen[0], /^Você pode alterar até .*27\/11 às 08:00 \(Horário de Brasília, America\/Sao_Paulo\)$/);
+    assert.match(deadlineLabel('2026-11-27T08:00'), /às 08:00 \(fuso do estabelecimento\)$/);
     for (const bad of [undefined, '2026-11-27', '2026-13-27T08:00', 'x'.repeat(16)]) assert.equal(deadlineLabel(bad), '');
   });
 });
@@ -230,7 +231,7 @@ describe('mapeamento das respostas', () => {
     const res = await loadRescheduleDay(TOKEN, { date: '2026-11-27', professionalId: 'same' }, { fetchFn: fakeFetch(200, body) });
     assert.equal(res.ok, true);
     assert.deepEqual(res.day.slots.map((s) => [s.label, s.endLabel]), [['10:00', '11:00'], ['23:00', '24:00']]);
-    assert.match(rescheduleSummary(res.day.slots[0], { weekday: 5, timezone: 'America/Sao_Paulo' }), /10:00 – 11:00 \(America\/Sao_Paulo\)$/);
+    assert.match(rescheduleSummary(res.day.slots[0], { weekday: 5, timezone: 'America/Sao_Paulo' }), /10:00 – 11:00 \(Horário de Brasília, America\/Sao_Paulo\)$/);
     assert.match(slotsReadyMessage(1, '2026-11-27', 5), /^1 horário livre em /);
     assert.match(slotsReadyMessage(2, '2026-11-27', 5), /^2 horários livres em /);
     const missing = await loadRescheduleDay(TOKEN, { date: '2026-11-28', professionalId: 'same' }, { fetchFn: fakeFetch(200, body) });

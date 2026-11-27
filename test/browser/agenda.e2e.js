@@ -561,7 +561,7 @@ describe('estados, fuso, polling e acesso (critérios 2, 4, 33, 35 e 40)', () =>
     try {
       await openAgenda(page);
       assert.equal(await page.locator('#agenda-title').textContent(), 'quinta-feira, 26/11/2026');
-      assert.equal(await page.locator('#agenda-timezone').textContent(), 'Horários no fuso America/Sao_Paulo');
+      assert.equal(await page.locator('#agenda-timezone').textContent(), 'Horários no fuso do estabelecimento: Horário de Brasília (America/Sao_Paulo).');
       assert.match(await itemButton(page, 'Fuso Tokyo').innerText(), /16:00 às 17:00/);
       assert.match(page.url(), /date=2026-11-26/);
       await afterReload(page, () => page.click('#view-week'));

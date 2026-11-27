@@ -246,7 +246,7 @@ describe('seleção e textos', () => {
     assert.equal(dayLabel('2026-11-28', 6), 'sáb, 28/11');
     assert.equal(
       selectedSummary({ start: '2026-11-27T09:00', end: '2026-11-27T10:00' }, { serviceName: 'Corte', timezone: 'America/Sao_Paulo', weekday: 5 }),
-      'Corte · sex, 27/11 · 09:00 – 10:00 (America/Sao_Paulo)',
+      'Corte · sex, 27/11 · 09:00 – 10:00 (Horário de Brasília, America/Sao_Paulo)',
     );
     assert.equal(
       selectedSummary({ start: '2026-11-27T22:00', end: '2026-11-28T00:00' }, { serviceName: 'Corte', timezone: 'UTC', weekday: 5 }),
@@ -396,7 +396,7 @@ describe('createAttemptKeys, successDetails e safePhoneHref (AF-11)', () => {
     }
     assert.deepEqual(results[0], [
       { label: 'Data', value: 'sex, 27/11/2026' },
-      { label: 'Horário', value: '10:00 – 11:00 (America/Sao_Paulo)' },
+      { label: 'Horário', value: '10:00 – 11:00 (Horário de Brasília, America/Sao_Paulo)' },
       { label: 'Serviço', value: 'Corte · 1 h · R$ 50,00' },
       { label: 'Profissional', value: 'Bia Lima' },
       { label: 'Endereço', value: 'Rua A, 10' },
@@ -414,7 +414,7 @@ describe('createAttemptKeys, successDetails e safePhoneHref (AF-11)', () => {
       professional: { name: 42 },
       business: null,
     });
-    assert.equal(rows[1].value, '23:00 – 24:00 (America/Sao_Paulo)');
+    assert.equal(rows[1].value, '23:00 – 24:00 (Horário de Brasília, America/Sao_Paulo)');
     assert.equal(rows[2].value, 'Luzes · 1 h · Sob consulta');
     assert.equal(rows[3].value, '');
     assert.equal(rows[4].value, '');

@@ -53,7 +53,7 @@ export function createProfessionalsService({
   appointments = noAppointments,
   processImage = processProfessionalPhoto,
   imageLimiter = unlimitedImageLimiter,
-  now = () => new Date(),
+  now = () => new Date(), // utc
   log = noopLog,
 }) {
   /** O negócio vem sempre da sessão; nunca do cliente. */

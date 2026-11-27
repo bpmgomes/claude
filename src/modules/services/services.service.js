@@ -32,7 +32,7 @@ export function createServicesService({
   servicesRepository,
   businessesRepository,
   appointments = noAppointments,
-  now = () => new Date(),
+  now = () => new Date(), // utc
   log = noopLog,
 }) {
   /** O negócio vem sempre da sessão; nunca do cliente. */

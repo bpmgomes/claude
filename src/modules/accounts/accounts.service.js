@@ -7,7 +7,7 @@ import { ValidationError, ConflictError } from '../../http/errors.js';
 
 const EMAIL_TAKEN_MESSAGE = 'Este e-mail já está cadastrado.';
 
-export function createAccountsService({ db, usersRepository, sessionsService, config, now = () => new Date() }) {
+export function createAccountsService({ db, usersRepository, sessionsService, config, now = () => new Date() }) { // utc
   return {
     /**
      * Revoga a sessão anterior ativa (se houver) na mesma transação que cria a nova.

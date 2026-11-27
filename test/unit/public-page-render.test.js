@@ -208,7 +208,7 @@ describe('ação de agendar e estado vazio (critérios 7, 8 e 15)', () => {
     assert.ok(html.includes('>Qualquer profissional</option>'));
     const [date] = tagsOf(html, 'input');
     assert.deepEqual(date, { id: 'bk-date', type: 'date', min: '2026-11-26', max: '2027-02-24', value: '2026-11-26' });
-    assert.ok(textOf(html).includes('Horários no fuso America/Sao_Paulo.'));
+    assert.ok(textOf(html).includes('Horários no fuso do estabelecimento: Horário de Brasília (America/Sao_Paulo).'));
     for (const id of ['bk-service', 'bk-professional', 'bk-date']) {
       assert.ok(tagsOf(html, 'label').some((l) => l.for === id), id);
     }
@@ -448,5 +448,44 @@ describe('AF-18: frase de e-mail na tela de sucesso (critério 30)', () => {
     assert.equal(withEmail.replace(`<p class="pp-success-email">${SUCCESS_EMAIL_TEXT}</p>\n`, ''), plain);
     // Sem oferta não há tela de sucesso, com ou sem e-mail.
     assert.equal(renderPublicPage(page({ hasOffer: false }), { emailEnabled: true }), renderPublicPage(page({ hasOffer: false })));
+  });
+});
+
+describe('AF-23: aviso de fuso no HTML inicial (critérios 7, 15 e 16)', () => {
+  const NOTICE_SP = 'Horários no fuso do estabelecimento: Horário de Brasília (America/Sao_Paulo).';
+
+  test('p#bk-timezone com o texto único ANTES da lista, que aponta para ele por aria-describedby', () => {
+    const html = renderPublicPage(page());
+    const notice = tagsOf(html, 'p').find((p) => p.id === 'bk-timezone');
+    assert.ok(notice);
+    assert.equal(notice.class, 'pp-timezone tz-notice');
+    assert.equal('data-tz-notice' in notice, true);
+    assert.equal('title' in notice, false);
+    assert.ok(html.includes(`<p class="pp-timezone tz-notice" id="bk-timezone" data-tz-notice>${NOTICE_SP}</p>`));
+    assert.ok(html.indexOf('id="bk-timezone"') < html.indexOf('<ul class="pp-slots"'));
+    const [slots] = tagsOf(html, 'ul').filter((u) => u.class === 'pp-slots');
+    assert.equal(slots['aria-describedby'], 'bk-timezone');
+  });
+
+  test('as sugestões do 409 têm o próprio aviso, e a lista aponta para ele', () => {
+    const html = renderPublicPage(page());
+    const notice = tagsOf(html, 'p').find((p) => p.id === 'bk-suggestions-timezone');
+    assert.ok(notice);
+    assert.equal('data-tz-notice' in notice, true);
+    const [list] = tagsOf(html, 'ul').filter((u) => u.class === 'pp-suggestions-list');
+    assert.equal(list['aria-describedby'], 'bk-suggestions-timezone');
+    const block = html.slice(html.indexOf('<div class="pp-suggestions"'), html.indexOf('</div>', html.indexOf('<div class="pp-suggestions"')));
+    assert.ok(textOf(block).includes(NOTICE_SP));
+  });
+
+  test('negócio em America/Manaus: "Horário de Manaus (America/Manaus)"; fora da tabela, o IANA cru', () => {
+    const manaus = renderPublicPage({ ...page(), booking: { ...page().booking, timezone: 'America/Manaus' } });
+    assert.ok(textOf(manaus).includes('Horários no fuso do estabelecimento: Horário de Manaus (America/Manaus).'));
+    const tokyo = renderPublicPage({ ...page(), booking: { ...page().booking, timezone: 'Asia/Tokyo' } });
+    assert.ok(textOf(tokyo).includes('Horários no fuso do estabelecimento: Asia/Tokyo.'));
+  });
+
+  test('o módulo do texto único está no grafo pré-carregado', () => {
+    assert.ok(PUBLIC_BOOKING_MODULES.includes('/shared/timezone-names.js'));
   });
 });

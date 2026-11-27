@@ -9,7 +9,7 @@
     "test": "node --test --test-concurrency=1 \"test/**/*.test.js\"",
     "test:coverage:availability": "node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-include=src/modules/availability/availability-engine.js --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 --test-skip-pattern=\"500 ms\" \"test/unit/availability-engine*.test.js\"",
     "perf": "node --test --test-concurrency=1 test/browser/public-page.perf.js test/browser/agenda.perf.js",
-    "test:e2e": "node --test --test-concurrency=1 test/browser/public-page.e2e.js test/browser/booking.e2e.js test/browser/manage.e2e.js test/browser/email.e2e.js test/browser/agenda.e2e.js",
+    "test:e2e": "node --test --test-concurrency=1 test/browser/public-page.e2e.js test/browser/booking.e2e.js test/browser/manage.e2e.js test/browser/email.e2e.js test/browser/agenda.e2e.js test/browser/timezone.e2e.js",
     "migrate": "node src/db/migrate.js",
     "lint": "eslint . --max-warnings 0",
     "smoke": "node scripts/smoke.js"

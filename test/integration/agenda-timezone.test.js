@@ -66,7 +66,7 @@ describe('dias de 23 e 25 h em America/Sao_Paulo (2018/2019)', () => {
 });
 
 describe('TZ do processo não muda nada (critério 4)', () => {
-  test('negócio em Asia/Tokyo e em America/Sao_Paulo com TZ=UTC, Asia/Tokyo e America/Sao_Paulo: respostas idênticas byte a byte', async () => {
+  test('negócio em Asia/Tokyo e em America/Sao_Paulo com TZ=UTC, Asia/Tokyo, America/Sao_Paulo e America/Manaus: respostas idênticas byte a byte', async () => {
     const original = process.env.TZ;
     const ctx = await agendaApp();
     try {
@@ -80,7 +80,7 @@ describe('TZ do processo não muda nada (critério 4)', () => {
       for (const tz of ['America/Sao_Paulo', 'Asia/Tokyo']) {
         await setBusinessTimezone(ctx.app, ctx.business.id, tz);
         const bodies = [];
-        for (const processTz of ['UTC', 'Asia/Tokyo', 'America/Sao_Paulo']) {
+        for (const processTz of ['UTC', 'Asia/Tokyo', 'America/Sao_Paulo', 'America/Manaus']) {
           process.env.TZ = processTz;
           const week = await getAgenda(ctx.app, ctx.cookies, { from: '2026-11-23', to: '2026-11-29', includeCancelled: 'true' });
           const day = await getAgenda(ctx.app, ctx.cookies);

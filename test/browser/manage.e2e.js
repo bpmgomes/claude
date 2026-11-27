@@ -161,7 +161,7 @@ describe('gerenciar o agendamento (AF-12)', () => {
       try {
         assert.equal(await state(page), 'summary');
         assert.equal(await page.locator('#mg-summary-titulo').textContent(), 'Agendamento confirmado');
-        assert.match(await page.locator('.mg-deadline').textContent(), /^Você pode alterar até .*27\/11 às 0[79]:00$/);
+        assert.match(await page.locator('.mg-deadline').textContent(), /^Você pode alterar até .*27\/11 às 0[79]:00 \(Horário de Brasília, America\/Sao_Paulo\)$/);
         assert.match(await page.locator('.mg-policy').textContent(), /até 2 h antes/);
         const details = await page.locator('.mg-details').innerText();
         assert.ok(details.includes('Corte'), details);
