@@ -49,6 +49,15 @@ test('REDACT_PATHS cobre token, tokenHash, token_hash e manageUrl em 4 níveis',
   }
 });
 
+test('AF-03 (critério 33): REDACT_PATHS cobre passwordConfirmation e resetUrl em 4 níveis, e url na raiz', () => {
+  for (const key of ['passwordConfirmation', 'resetUrl']) {
+    for (const path of [key, `*.${key}`, `*.*.${key}`, `*.*.*.${key}`]) assert.ok(REDACT_PATHS.includes(path), path);
+  }
+  assert.ok(REDACT_PATHS.includes('url'));
+  // `*.url` apagaria o req.url (já redigido) de todo log de acesso.
+  assert.equal(REDACT_PATHS.includes('*.url'), false);
+});
+
 test('AF-18 (critério 26): mensagem de e-mail e credenciais SMTP saem [REDACTED] em até 4 níveis', async () => {
   const { Writable } = await import('node:stream');
   const { default: Fastify } = await import('fastify');
@@ -56,7 +65,7 @@ test('AF-18 (critério 26): mensagem de e-mail e credenciais SMTP saem [REDACTED
   const stream = new Writable({ write(chunk, _e, cb) { lines.push(chunk.toString()); cb(); } });
   const app = Fastify({ logger: { level: 'debug', stream, redact: { paths: REDACT_PATHS, censor: '[REDACTED]' } } });
   const SECRET = 'valor-sensivel-af18';
-  const keys = ['to', 'from', 'subject', 'text', 'html', 'attachments', 'smtpPassword', 'auth', 'manageUrl', 'token'];
+  const keys = ['to', 'from', 'subject', 'text', 'html', 'attachments', 'smtpPassword', 'auth', 'manageUrl', 'token', 'passwordConfirmation', 'resetUrl'];
   for (const key of keys) {
     app.log.info({ [key]: SECRET });
     app.log.info({ a: { [key]: SECRET } });

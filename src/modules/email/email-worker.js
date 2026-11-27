@@ -7,6 +7,10 @@
 import {
   EMAIL_CANCELLATION_KINDS,
   EMAIL_KIND_RESCHEDULED,
+  EMAIL_ACCOUNT_KINDS,
+  EMAIL_KIND_PASSWORD_RESET,
+  EMAIL_ACCOUNT_RECIPIENT_MAX,
+  PASSWORD_RESET_SEND_MAX_AGE_MS,
   EMAIL_MAX_SENDS,
   EMAIL_LEASE_MS,
   EMAIL_SEND_TIMEOUT_MS,
@@ -23,6 +27,8 @@ import {
 import { TransientMailError, PermanentMailError } from './mail-transport.js';
 import { buildMailMessage, messageIdOf, toSafeAddress } from './message.js';
 import { renderAppointmentEmail } from './templates/appointment-email.js';
+import { renderAccountEmail } from './templates/account-email.js';
+import { DEFAULT_TIME_ZONE } from '../../shared/time-blocks.js';
 import { RESCHEDULES_PER_CHAIN_MAX, APPOINTMENT_STATUS_CONFIRMED, APPOINTMENT_STATUS_CANCELLED } from '../../shared/appointments.js';
 
 const noopLog = { info() {}, warn() {}, error() {} };
@@ -53,11 +59,16 @@ function normalizeError(err) {
  *   publicBaseUrl: string,
  *   enabled: boolean, intervalMs: number, batchSize?: number,
  *   render?: typeof renderAppointmentEmail,
+ *   usersRepository?: object, passwordResetTokensRepository?: object,
+ *   passwordResetTokenIssuer?: ReturnType<typeof import('../auth/password-reset-token-issuer.js').createPasswordResetTokenIssuer>,
+ *   renderAccount?: typeof renderAccountEmail,
+ *   purgeAccount?: (() => Promise<void>) | null,
  *   now?: () => Date, random?: () => number,
  *   timers?: { setTimeout: typeof setTimeout, clearTimeout: typeof clearTimeout },
  *   sendTimeoutMs?: number, leaseMs?: number,
  *   log?: { info: Function, warn: Function, error: Function },
  * }} deps
+ * AF-03: as dependências de conta são opcionais; sem elas, uma linha de conta vira `skipped missing`.
  */
 export function createEmailWorker(deps) {
   const {
@@ -76,6 +87,11 @@ export function createEmailWorker(deps) {
     intervalMs,
     batchSize = EMAIL_BATCH_SIZE,
     render = renderAppointmentEmail,
+    usersRepository = null,
+    passwordResetTokensRepository = null,
+    passwordResetTokenIssuer = null,
+    renderAccount = renderAccountEmail,
+    purgeAccount = null,
     now = () => new Date(), // utc
     random = Math.random,
     timers = { setTimeout, clearTimeout },
@@ -136,7 +152,10 @@ export function createEmailWorker(deps) {
     }
   }
 
-  /** 5.2: preparo numa transação (só `tx`). @returns {Promise<object>} */
+  /**
+   * 5.2: preparo numa transação (só `tx`), despachado pela família do `kind` (AF-03). Ordem de travas
+   * do worker: a fila (claim) antes do token (design AF-03 3.4, R6). @returns {Promise<object>}
+   */
   function prepare(id, nowMs, lease) {
     const nowIso = iso(nowMs);
     return db.transaction(async (tx) => {
@@ -152,6 +171,13 @@ export function createEmailWorker(deps) {
         await outbox.markFailed(id, lease, { errorCode: code, nowIso }, tx);
         return { action: 'failed', row, code };
       };
+      const step = { tx, id, row, nowMs, nowIso, skip, fail };
+      return EMAIL_ACCOUNT_KINDS.includes(row.kind) ? prepareAccount(step) : prepareAppointment(step);
+    });
+  }
+
+  /** Preparo de e-mail de agendamento (AF-18/AF-14), o mesmo de antes do AF-03. */
+  async function prepareAppointment({ tx, id, row, nowMs, nowIso, skip, fail }) {
       // Releitura pelo business_id DA LINHA (critério 29).
       const businessId = row.businessId;
       const business = await businessesRepository.findById(businessId, tx);
@@ -196,7 +222,50 @@ export function createEmailWorker(deps) {
               nowIso,
             });
       return { action: 'send', row, business, appointment, previous, to, chain: { rootAppointmentId, sequence }, token };
-    });
+  }
+
+  /**
+   * Preparo de e-mail de conta (AF-03, design 5.3): conta, pedido mais novo e idade (só
+   * `password_reset`), endereço, cota de conta (5 links em 24 h, separada da de agendamento; o aviso
+   * `password_changed` é isento, decisão 2 da revisão de segurança) e só então o token (decisão 12: a
+   * hora de validade começa no envio). Só a emissão invalida os links anteriores (decisão 1): um
+   * pedido barrado aqui não destrói o link já recebido. O texto puro existe só em `token.url`.
+   */
+  async function prepareAccount({ tx, id, row, nowMs, nowIso, skip, fail }) {
+    if (!usersRepository) return skip('missing');
+    const user = await usersRepository.findById(row.userId, tx);
+    if (!user) return skip('missing');
+    const reset = row.kind === EMAIL_KIND_PASSWORD_RESET;
+    if (reset) {
+      if (!passwordResetTokenIssuer) return skip('missing');
+      if (nowMs - Date.parse(row.createdAt) > PASSWORD_RESET_SEND_MAX_AGE_MS) return skip('stale');
+      if ((await outbox.hasNewerAccountRow(row, tx)) || (user.passwordChangedAt && user.passwordChangedAt > row.createdAt)) {
+        return skip('superseded');
+      }
+    }
+    const to = toSafeAddress(user.email);
+    if (!to) return fail('invalid_header');
+    if (reset) {
+      const recent = await outbox.countRecentAccountEmails(
+        user.email,
+        { sinceIso: iso(nowMs - EMAIL_RECIPIENT_WINDOW_HOURS * HOUR_MS), excludeId: id },
+        tx,
+      );
+      if (recent >= EMAIL_ACCOUNT_RECIPIENT_MAX) return skip('recipient_limited');
+      const token = await passwordResetTokenIssuer.issue(tx, { userId: user.id, nowIso });
+      return { action: 'send', row, account: true, user, to, token };
+    }
+    const business = await businessesRepository.findByOwnerId(user.id, tx);
+    return {
+      action: 'send',
+      row,
+      account: true,
+      user,
+      to,
+      token: null,
+      timeZone: business?.timezone || DEFAULT_TIME_ZONE,
+      changedAtMs: Date.parse(row.createdAt),
+    };
   }
 
   /** 5.3: registro numa transação, com o arrendamento. @returns {Promise<'recorded'|'lost'>} */
@@ -211,6 +280,15 @@ export function createEmailWorker(deps) {
         result = await outbox.markRetry(row.id, lease, { nextAttemptAt, errorCode: error.code, nowIso, maybeDelivered: error.maybeDelivered }, tx);
       } else result = await outbox.markFailed(row.id, lease, { errorCode: error.code, nowIso, maybeDelivered: Boolean(error?.maybeDelivered) }, tx);
       if (result.changes !== 1) return 'lost';
+      if (prep.account) {
+        // AF-03 (critério 31): falha definitiva apaga o token do envio SEMPRE; temporária com envios
+        // sobrando, só se não pode ter chegado (com `maybeDelivered`, a próxima emissão o substitui).
+        const definitive = !(error instanceof TransientMailError && lease.attempts < EMAIL_MAX_SENDS);
+        if (error && token && passwordResetTokensRepository && (definitive || !error.maybeDelivered)) {
+          await passwordResetTokensRepository.deleteByHash(token.tokenHash, tx);
+        }
+        return 'recorded';
+      }
       // Token de um envio que falhou e não pode ter chegado: apagado, para retentativas não
       // empurrarem para fora do teto o link da tela de sucesso (decisão 5 do Gerente).
       if (error && token && !error.maybeDelivered) {
@@ -242,17 +320,27 @@ export function createEmailWorker(deps) {
     let error = null;
     let message = null;
     try {
-      const rendered = render({
-        kind: prep.row.kind,
-        business: prep.business,
-        appointment: prep.appointment,
-        previous: prep.previous ?? undefined,
-        chain: prep.chain,
-        manageUrl: prep.token?.url,
-        publicBaseUrl,
-        nowMs,
-        requireHttps: Boolean(emailConfig.requireHttps),
-      });
+      const rendered = prep.account
+        ? renderAccount({
+            kind: prep.row.kind,
+            user: { name: prep.user.name },
+            resetUrl: prep.token?.url,
+            changedAtMs: prep.changedAtMs,
+            timeZone: prep.timeZone,
+            publicBaseUrl,
+            requireHttps: Boolean(emailConfig.requireHttps),
+          })
+        : render({
+            kind: prep.row.kind,
+            business: prep.business,
+            appointment: prep.appointment,
+            previous: prep.previous ?? undefined,
+            chain: prep.chain,
+            manageUrl: prep.token?.url,
+            publicBaseUrl,
+            nowMs,
+            requireHttps: Boolean(emailConfig.requireHttps),
+          });
       message = buildMailMessage({
         rendered,
         to: prep.to,
@@ -334,6 +422,9 @@ export function createEmailWorker(deps) {
           batch: EMAIL_PURGE_CYCLE_BATCH,
         });
         if (purged > 0) log.info({ event: 'email_outbox_purged', count: purged });
+        // AF-03 (B2 da revisão de segurança): tokens vencidos, baldes e eventos velhos, num lote
+        // limitado por ciclo. `purgeAccount` nunca lança (loga `password_reset_purge_failed`).
+        if (purgeAccount) await purgeAccount();
       }
     } catch (err) {
       summary.errors += 1;

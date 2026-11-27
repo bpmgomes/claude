@@ -5,7 +5,7 @@ import { EMAIL_TRANSIENT_CODES, EMAIL_PERMANENT_CODES } from './email-rules.js';
  * @typedef {{
  *   from: { name: string, address: string }, to: string,          // um destinatário, sem nome
  *   subject: string, text: string, html: string,
- *   attachments: Array<{ filename: 'agendamento.ics', content: string, contentType: string }>,
+ *   attachments: Array<{ filename: 'agendamento.ics', content: string, contentType: string }>,  // vazia nos e-mails de conta (AF-03)
  *   headers: { 'Auto-Submitted': 'auto-generated' },
  *   messageId: string, date: Date,
  * }} MailMessage

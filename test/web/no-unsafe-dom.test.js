@@ -20,7 +20,7 @@ test('web/js/*.js não usa APIs de DOM inseguras (critério 14)', async () => {
 });
 
 test('HTML não tem script nem estilo inline (CSP)', async () => {
-  const expected = ['cadastro.html', 'onboarding.html', 'login.html', 'negocio.html', 'servicos.html', 'profissionais.html', 'horarios.html', 'bloqueios.html', 'agenda.html'];
+  const expected = ['cadastro.html', 'onboarding.html', 'login.html', 'negocio.html', 'servicos.html', 'profissionais.html', 'horarios.html', 'bloqueios.html', 'agenda.html', 'esqueci-senha.html', 'redefinir-senha.html'];
   const all = (await readdir(join(ROOT, 'web'))).filter((f) => f.endsWith('.html'));
   for (const file of expected) assert.ok(all.includes(file), file);
   for (const file of all) {

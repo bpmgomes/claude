@@ -31,7 +31,7 @@ async function withDir(fn) {
 /** Diretório só com as migrações abaixo de `limit` (ex.: '014'). */
 async function partialDir(dir, limit) {
   const partial = join(dir, `upto-${limit}`);
-  await mkdir(partial);
+  await mkdir(partial, { recursive: true });
   for (const f of (await readdir(MIGRATIONS)).filter((n) => n.endsWith('.sql') && n < limit)) {
     await copyFile(join(MIGRATIONS, f), join(partial, f));
   }
@@ -98,30 +98,33 @@ async function populated013(dir) {
 
 describe('migração 014 (critérios 11 e 25)', () => {
   test('014 registrada; cancelled_by por último em appointments; CHECK nas combinações', async () => {
-    const db = createDatabase({ databasePath: ':memory:' });
-    try {
-      await runMigrations(db);
-      const versions = (await db.all('SELECT version FROM schema_migrations ORDER BY version')).map((r) => r.version);
-      assert.equal(versions.at(-1), '014_owner_cancellation');
-      const cols = (await db.all('PRAGMA table_info(appointments)')).map((c) => c.name);
-      assert.equal(cols.at(-1), 'cancelled_by');
-      assert.equal(cols.length, 17);
-      const b = await seedBusiness(db);
-      const id = await b.appt(7);
-      const set = (status, by) =>
-        db.run('UPDATE appointments SET status = ?, cancelled_at = ?, cancelled_by = ? WHERE id = ?', [status, status === 'cancelled' ? NOW : null, by, id]);
-      await assert.rejects(set('cancelled', 'x'), /CHECK constraint failed: appointments_cancelled_by_check/);
-      await assert.rejects(set('confirmed', 'owner'), /CHECK constraint failed: appointments_cancelled_by_check/);
-      await assert.rejects(set('completed', 'customer'), /appointments_cancelled_by_check/);
-      await set('cancelled', null);
-      for (const by of ['customer', 'owner', 'reschedule']) await set('cancelled', by);
-      await set('confirmed', null);
-      // o CHECK de 014 é o que CANCELLED_BY espelha (agenda-rules.test.js lê o mesmo texto).
-      const { sql } = await db.get("SELECT sql FROM sqlite_master WHERE name = 'appointments'");
-      assert.match(sql, /cancelled_by IN \('customer', 'owner', 'reschedule'\)/);
-    } finally {
-      await db.close();
-    }
+    // AF-03: a 015 recria email_outbox de novo; este teste olha o estado DA 014.
+    await withDir(async (dir) => {
+      const db = createDatabase({ databasePath: ':memory:' });
+      try {
+        await runMigrations(db, { dir: await partialDir(dir, '015') });
+        const versions = (await db.all('SELECT version FROM schema_migrations ORDER BY version')).map((r) => r.version);
+        assert.equal(versions.at(-1), '014_owner_cancellation');
+        const cols = (await db.all('PRAGMA table_info(appointments)')).map((c) => c.name);
+        assert.equal(cols.at(-1), 'cancelled_by');
+        assert.equal(cols.length, 17);
+        const b = await seedBusiness(db);
+        const id = await b.appt(7);
+        const set = (status, by) =>
+          db.run('UPDATE appointments SET status = ?, cancelled_at = ?, cancelled_by = ? WHERE id = ?', [status, status === 'cancelled' ? NOW : null, by, id]);
+        await assert.rejects(set('cancelled', 'x'), /CHECK constraint failed: appointments_cancelled_by_check/);
+        await assert.rejects(set('confirmed', 'owner'), /CHECK constraint failed: appointments_cancelled_by_check/);
+        await assert.rejects(set('completed', 'customer'), /appointments_cancelled_by_check/);
+        await set('cancelled', null);
+        for (const by of ['customer', 'owner', 'reschedule']) await set('cancelled', by);
+        await set('confirmed', null);
+        // o CHECK de 014 é o que CANCELLED_BY espelha (agenda-rules.test.js lê o mesmo texto).
+        const { sql } = await db.get("SELECT sql FROM sqlite_master WHERE name = 'appointments'");
+        assert.match(sql, /cancelled_by IN \('customer', 'owner', 'reschedule'\)/);
+      } finally {
+        await db.close();
+      }
+    });
   });
 
   test('recriação de email_outbox com linhas existentes: dados, colunas, índices, FKs e integridade preservados', async () => {
@@ -131,7 +134,7 @@ describe('migração 014 (critérios 11 e 25)', () => {
         const before = await db.all('SELECT * FROM email_outbox ORDER BY id');
         const customersIdxBefore = await db.get("SELECT sql FROM sqlite_master WHERE name = 'customers_email_idx'");
         assert.equal(before.length, 6);
-        assert.deepEqual(await runMigrations(db), ['014_owner_cancellation']);
+        assert.deepEqual(await runMigrations(db, { dir: await partialDir(dir, '015') }), ['014_owner_cancellation']);
 
         assert.deepEqual(await db.all('SELECT * FROM email_outbox ORDER BY id'), before, 'SELECT * idêntico');
         assert.deepEqual((await db.all('PRAGMA table_info(email_outbox)')).map((c) => c.name), OUTBOX_COLUMNS);
@@ -183,7 +186,7 @@ describe('migração 014 (critérios 11 e 25)', () => {
         await db.run('DELETE FROM businesses WHERE id = ?', [b.businessId]);
         assert.equal(Number((await db.get('SELECT COUNT(*) AS n FROM email_outbox')).n), 0);
         // Rodar de novo não aplica nada.
-        assert.deepEqual(await runMigrations(db), []);
+        assert.deepEqual(await runMigrations(db, { dir: await partialDir(dir, '015') }), []);
       } finally {
         await db.close();
       }
@@ -209,7 +212,7 @@ describe('migração 014 (critérios 11 e 25)', () => {
         assert.ok(!(await db.all('PRAGMA table_info(appointments)')).some((c) => c.name === 'cancelled_by'));
         assert.equal(await db.get("SELECT version FROM schema_migrations WHERE version = '014_owner_cancellation'"), undefined);
         // E a 014 real ainda aplica depois.
-        assert.deepEqual(await runMigrations(db), ['014_owner_cancellation']);
+        assert.deepEqual(await runMigrations(db, { dir: await partialDir(dir, '015') }), ['014_owner_cancellation']);
         assert.deepEqual(await db.all('SELECT * FROM email_outbox ORDER BY id'), before);
       } finally {
         await db.close();

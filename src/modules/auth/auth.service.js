@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { validateLogin, PASSWORD_MAX_BYTES } from '../../shared/validation.js';
 import { hashPassword, verifyPassword as defaultVerifyPassword } from './password.js';
-import { attemptKey } from './login-attempts.service.js';
+import { attemptKey, attemptEmailKey } from './login-attempts.service.js';
 import { toPublicUser } from '../accounts/users.repository.js';
 import { ValidationError, LoginLockedError, InvalidCredentialsError } from '../../http/errors.js';
 import { NEXT_STEP_PATH } from '../businesses/businesses.service.js';
@@ -48,7 +48,8 @@ export function createAuthService({
       const { email, password } = result.value;
 
       const key = attemptKey(email, ip);
-      const reservation = await loginAttemptsService.reserve(key);
+      // AF-03 (critério 20): a linha leva o email_hash da conta, para a troca de senha zerar o bloqueio.
+      const reservation = await loginAttemptsService.reserve(key, { emailHash: attemptEmailKey(email) });
       if (!reservation.allowed) throw new LoginLockedError(reservation.retryAfterSeconds);
 
       const user = await usersRepository.findByEmail(email);
@@ -57,6 +58,10 @@ export function createAuthService({
       if (!ok) throw new InvalidCredentialsError();
 
       const session = await db.transaction(async (tx) => {
+        // AF-03 (5.5, R5): o bcrypt rodou fora da transação. Se a senha foi trocada nesse meio-tempo,
+        // o hash verificado não vale mais: nenhuma sessão nasce com a senha antiga.
+        const currentHash = await usersRepository.findPasswordHash(user.id, tx);
+        if (currentHash !== user.passwordHash) throw new InvalidCredentialsError();
         await loginAttemptsService.clear(key, { conn: tx });
         await sessionsService.revokeSession(previousSessionId, { conn: tx });
         return sessionsService.createSession(user.id, { conn: tx });

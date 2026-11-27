@@ -20,8 +20,10 @@ const UTC_MARKED = Object.freeze({
   'src/modules/agenda/agenda.service.js': 1,
   'src/modules/appointments/appointments.service.js': 1,
   'src/modules/appointments/manage.service.js': 1,
+  'src/modules/auth/auth-rate-limits.service.js': 1,
   'src/modules/auth/auth.service.js': 1,
   'src/modules/auth/login-attempts.service.js': 1,
+  'src/modules/auth/password-reset.service.js': 1,
   'src/modules/auth/sessions.service.js': 1,
   'src/modules/availability/availability.service.js': 1,
   'src/modules/businesses/businesses.service.js': 1,
@@ -255,6 +257,8 @@ describe('texto único do fuso (critério 14)', () => {
       'src/modules/public-page/public-page.render.js',
       'src/modules/email/email-messages.js',
       'src/modules/email/templates/appointment-email.js',
+      // AF-03 (critério 32): aviso de troca de senha com data, hora e fuso.
+      'src/modules/email/templates/account-email.js',
     ]) {
       const text = await readFile(join(ROOT, path), 'utf8');
       assert.match(text, /^import \{[^}]+\} from '[^']*\/shared\/timezone-names\.js';$/m, path);

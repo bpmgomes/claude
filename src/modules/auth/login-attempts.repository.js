@@ -7,12 +7,14 @@ export function createLoginAttemptsRepository(db) {
      * INSERT ... ON CONFLICT DO UPDATE trava a linha; no SQLite a transação é
      * BEGIN IMMEDIATE e já é exclusiva.
      */
-    async touch(keyHash, nowIso, conn = db) {
+    async touch(keyHash, nowIso, conn = db, { emailHash = null } = {}) {
+      // AF-03 (critério 20): `email_hash` da conta, para zerar o bloqueio de todos os IPs na troca.
       await conn.run(
-        `INSERT INTO login_attempts (key_hash, failed_count, locked_until, updated_at)
-         VALUES (?, 0, NULL, ?)
-         ON CONFLICT (key_hash) DO UPDATE SET updated_at = excluded.updated_at`,
-        [keyHash, nowIso],
+        `INSERT INTO login_attempts (key_hash, failed_count, locked_until, updated_at, email_hash)
+         VALUES (?, 0, NULL, ?, ?)
+         ON CONFLICT (key_hash) DO UPDATE SET updated_at = excluded.updated_at,
+           email_hash = COALESCE(excluded.email_hash, login_attempts.email_hash)`,
+        [keyHash, nowIso, emailHash],
       );
     },
 
@@ -39,6 +41,12 @@ export function createLoginAttemptsRepository(db) {
 
     async clear(keyHash, conn = db) {
       await conn.run('DELETE FROM login_attempts WHERE key_hash = ?', [keyHash]);
+    },
+
+    /** Apaga as linhas da conta, de qualquer IP (AF-03, critério 20). @returns {Promise<number>} */
+    async clearByEmailHash(emailHash, conn = db) {
+      const { changes } = await conn.run('DELETE FROM login_attempts WHERE email_hash = ?', [emailHash]);
+      return changes;
     },
   };
 }

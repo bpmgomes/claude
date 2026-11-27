@@ -16,6 +16,8 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src');
 const COLUMNS = [
   'id', 'business_id', 'kind', 'appointment_id', 'previous_appointment_id', 'status', 'attempts', 'next_attempt_at',
   'locked_until', 'last_error_code', 'created_at', 'updated_at', 'sent_at', 'maybe_delivered_at',
+  // AF-03 (migração 015): alvo dos e-mails de conta, aditivo no fim.
+  'user_id',
 ];
 const T0 = '2026-11-26T12:00:00.000Z';
 const iso = (ms) => new Date(ms).toISOString();
@@ -46,6 +48,7 @@ async function insertRaw(over = {}) {
     updated_at: T0,
     sent_at: null,
     maybe_delivered_at: null,
+    user_id: null,
     ...over,
   };
   await db.run(`INSERT INTO email_outbox (${COLUMNS.join(', ')}) VALUES (${COLUMNS.map(() => '?').join(', ')})`, COLUMNS.map((c) => row[c]));
@@ -83,6 +86,7 @@ describe('migração 013 (critério 1)', () => {
   });
 
   test('CHECKs recusam domínio, previous incoerente, attempts, lock, sent_at e last_error_code', async () => {
+    const { owner_id: owner } = await db.get('SELECT owner_id FROM businesses WHERE id = ?', [seed.business.id]);
     const bad = [
       { kind: 'appointment_reminder' },
       { status: 'queued' },
@@ -104,8 +108,18 @@ describe('migração 013 (critério 1)', () => {
       { last_error_code: '' },
       { id: 'curto' },
       { created_at: '2026-11-26' },
+      // AF-03 (email_outbox_target_check): agendamento com user_id ou sem alvo; conta com alvo de agendamento.
+      { user_id: owner },
+      { appointment_id: null },
+      { business_id: null },
+      { kind: 'password_reset', user_id: owner },
+      { kind: 'password_changed', business_id: null, appointment_id: null },
+      { kind: 'password_reset', business_id: null, appointment_id: null, previous_appointment_id: apptA, user_id: owner },
     ];
     for (const over of bad) await assert.rejects(insertRaw(over), /CHECK|constraint/i, JSON.stringify(over));
+    for (const kind of ['password_reset', 'password_changed']) {
+      await insertRaw({ kind, business_id: null, appointment_id: null, user_id: owner });
+    }
     await insertRaw({ attempts: 5, last_error_code: 'a'.repeat(32) });
     await insertRaw({ kind: 'appointment_rescheduled', appointment_id: apptB, previous_appointment_id: apptA });
   });

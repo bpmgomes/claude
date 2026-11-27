@@ -6,13 +6,19 @@ export const EMAIL_KIND_CANCELLED = 'appointment_cancelled';
 export const EMAIL_KIND_RESCHEDULED = 'appointment_rescheduled';
 /** Cancelamento pelo dono (AF-14, critério 25; CHECK ampliado na migração 014). */
 export const EMAIL_KIND_CANCELLED_BY_OWNER = 'appointment_cancelled_by_owner';
-/** = CHECK `email_outbox_kind_check` vigente (014; teste). */
-export const EMAIL_KINDS = Object.freeze([
+/** E-mails de conta (AF-03, migração 015): alvo `user_id`, sem agendamento. */
+export const EMAIL_KIND_PASSWORD_RESET = 'password_reset';
+export const EMAIL_KIND_PASSWORD_CHANGED = 'password_changed';
+export const EMAIL_ACCOUNT_KINDS = Object.freeze([EMAIL_KIND_PASSWORD_RESET, EMAIL_KIND_PASSWORD_CHANGED]);
+/** Tipos de agendamento: alvo `business_id` + `appointment_id`. */
+export const EMAIL_APPOINTMENT_KINDS = Object.freeze([
   EMAIL_KIND_CONFIRMED,
   EMAIL_KIND_CANCELLED,
   EMAIL_KIND_RESCHEDULED,
   EMAIL_KIND_CANCELLED_BY_OWNER,
 ]);
+/** = CHECK `email_outbox_kind_check` vigente (015; teste). */
+export const EMAIL_KINDS = Object.freeze([...EMAIL_APPOINTMENT_KINDS, ...EMAIL_ACCOUNT_KINDS]);
 /** Tipos de cancelamento: relê `cancelled` no envio, não emite token, `.ics` CANCEL (AF-14). */
 export const EMAIL_CANCELLATION_KINDS = Object.freeze([EMAIL_KIND_CANCELLED, EMAIL_KIND_CANCELLED_BY_OWNER]);
 export const EMAIL_STATUSES = Object.freeze(['pending', 'sending', 'sent', 'failed', 'skipped', 'expired']);
@@ -38,6 +44,13 @@ export const EMAIL_RETENTION_DAYS = 30;
 export const EMAIL_RECIPIENT_WINDOW_HOURS = 24;
 /** Por e-mail normalizado, somando todos os negócios (critério 27). */
 export const EMAIL_RECIPIENT_MAX = 10;
+/**
+ * Cota própria dos e-mails de conta (AF-03, decisão 5 do Gerente): por endereço normalizado, em
+ * EMAIL_RECIPIENT_WINDOW_HOURS, separada da de agendamento (uma não esgota a outra).
+ */
+export const EMAIL_ACCOUNT_RECIPIENT_MAX = 5;
+/** `password_reset` mais velho que isto no preparo vira `skipped stale` (cobre 1 + 4 retentativas, ~3 h 08 min). */
+export const PASSWORD_RESET_SEND_MAX_AGE_MS = 14_400_000;
 /** Linhas por ciclo do worker. */
 export const EMAIL_BATCH_SIZE = 10;
 /** Lote da purga no boot; no ciclo do worker, EMAIL_PURGE_CYCLE_BATCH. */
@@ -59,7 +72,16 @@ export const EMAIL_TRANSIENT_CODES = Object.freeze([
 /** Falhas permanentes (direto a `failed`). */
 export const EMAIL_PERMANENT_CODES = Object.freeze(['smtp_5xx', 'recipient_rejected', 'invalid_header', 'render_failed']);
 /** Motivos de `skipped`. */
-export const EMAIL_SKIP_CODES = Object.freeze(['not_confirmed', 'not_cancelled', 'ended', 'missing', 'recipient_limited']);
+export const EMAIL_SKIP_CODES = Object.freeze([
+  'not_confirmed',
+  'not_cancelled',
+  'ended',
+  'missing',
+  'recipient_limited',
+  // AF-03 (só password_reset): há pedido mais novo ou a senha já foi trocada; pedido velho demais.
+  'superseded',
+  'stale',
+]);
 /** Falhas de configuração do SMTP: temporárias, com log próprio (decisão 3 do Gerente). */
 export const EMAIL_MISCONFIGURED_CODES = Object.freeze(['smtp_auth', 'smtp_sender', 'tls']);
 

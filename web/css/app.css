@@ -794,3 +794,48 @@ button.ag-item:focus-visible {
     outline-color: Highlight;
   }
 }
+
+/* AF-03: recuperação de senha (pedido, redefinição e aviso no login). Alvos de 44 px e foco visível. */
+.form-status {
+  margin: 16px 0 0;
+  padding: 12px;
+  color: #14532d;
+  background: #f0fdf4;
+  border: 1px solid #15803d;
+  border-radius: 8px;
+}
+
+/* Vazia continua no DOM e na árvore de acessibilidade (região viva sempre presente), sem caixa. */
+.form-status:empty {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.form-status:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.touch-link a,
+#forgot-password a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 8px;
+}
+
+.account-recovery a:focus-visible,
+.account-recovery button:focus-visible,
+#forgot-password a:focus-visible {
+  outline: 2px solid #1d4ed8;
+  outline-offset: 2px;
+}
+
+.toggle-password {
+  margin-bottom: 16px;
+}
+
+#link-invalid .form-error {
+  font-size: 1rem;
+}

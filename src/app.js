@@ -5,6 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 import { loadConfig, mergeConfig, resolveConflictsTokenSecret } from './config.js';
 import { resolveEmailConfig, createMailTransport } from './modules/email/email-config.js';
@@ -27,6 +28,13 @@ import authPlugin from './modules/auth/auth.plugin.js';
 import csrfPlugin from './http/csrf.js';
 import accountsRoutes from './modules/accounts/accounts.routes.js';
 import authRoutes from './modules/auth/auth.routes.js';
+import { createPasswordResetTokensRepository } from './modules/auth/password-reset-tokens.repository.js';
+import { createPasswordResetTokenIssuer } from './modules/auth/password-reset-token-issuer.js';
+import { createAuthRateLimitsRepository } from './modules/auth/auth-rate-limits.repository.js';
+import { createAuthRateLimiter } from './modules/auth/auth-rate-limits.service.js';
+import { createPasswordResetService, PASSWORD_RESET_PURGE_CYCLE } from './modules/auth/password-reset.service.js';
+import passwordResetRoutes from './modules/auth/password-reset.routes.js';
+import { renderLoginPage } from './modules/auth/login-page.js';
 import { createBusinessesRepository } from './modules/businesses/businesses.repository.js';
 import { createBusinessesService } from './modules/businesses/businesses.service.js';
 import businessesRoutes from './modules/businesses/businesses.routes.js';
@@ -125,6 +133,10 @@ export const REDACT_PATHS = [
     `*.*.${key}`,
     `*.*.*.${key}`,
   ]),
+  // AF-03 (critério 33): confirmação de senha e link de redefinição em até 4 níveis. `url` só na raiz:
+  // `*.url` apagaria o `req.url` (já sem query e redigido por redactLogUrl) de todo log de acesso.
+  ...['passwordConfirmation', 'resetUrl'].flatMap((key) => [key, `*.${key}`, `*.*.${key}`, `*.*.*.${key}`]),
+  'url',
 ];
 
 /**
@@ -333,9 +345,17 @@ export async function buildApp(overrides = {}) {
   const emailOutboxRepository = createEmailOutboxRepository(db);
   const mailTransport = overrides.mailTransport || createMailTransport(emailConfig, { smtpPassword, now });
   if (mailTransport && typeof mailTransport.init === 'function') await mailTransport.init();
+  // AF-03: tokens de redefinição (emitidos pelo worker no envio) e limites persistidos.
+  const passwordResetTokensRepository = createPasswordResetTokensRepository(db);
+  const passwordResetTokenIssuer = createPasswordResetTokenIssuer({ passwordResetTokensRepository, publicBaseUrl: config.publicBaseUrl });
+  const authRateLimitsRepository = createAuthRateLimitsRepository(db);
+  const authRateLimiter = createAuthRateLimiter({ authRateLimitsRepository, now });
   const emailWorker = createEmailWorker({
     db,
     outbox: emailOutboxRepository,
+    usersRepository,
+    passwordResetTokenIssuer,
+    passwordResetTokensRepository,
     appointmentsRepository,
     businessesRepository,
     customersRepository,
@@ -347,6 +367,9 @@ export async function buildApp(overrides = {}) {
     publicBaseUrl: config.publicBaseUrl,
     enabled: emailConfig.enabled,
     intervalMs: emailConfig.worker.intervalMs,
+    // AF-03 (B2): limpeza de redefinição a cada ciclo, num lote limitado. O serviço é criado mais
+    // abaixo; o ciclo só roda depois do boot.
+    purgeAccount: () => passwordResetService.purgeExpired(PASSWORD_RESET_PURGE_CYCLE),
     now,
     log: app.log,
   });
@@ -410,8 +433,25 @@ export async function buildApp(overrides = {}) {
     now,
     log: app.log,
   });
+  // Recuperação de senha (AF-03). Os limites `passwordReset` valem sempre (não dependem de rateLimit).
+  const passwordResetService = createPasswordResetService({
+    db,
+    usersRepository,
+    passwordResetTokensRepository,
+    sessionsRepository,
+    loginAttemptsRepository,
+    authRateLimitsRepository,
+    rateLimiter: authRateLimiter,
+    enqueueEmail,
+    wakeEmailWorker: () => emailWorker.wake(),
+    config,
+    now,
+    log: app.log,
+  });
   // Fila de e-mails (AF-18, 5.6), também com `none`: expira as pendentes velhas e purga as terminais.
   await emailWorker.maintenance();
+  // Tokens de redefinição vencidos há mais de 24 h e baldes velhos; uma falha não impede a subida.
+  await passwordResetService.purgeExpired();
   // R16: o Fastify roda os hooks onClose na ordem INVERSA do registro. Este é registrado depois do
   // que fecha o banco (logo após runMigrations), então o worker para ANTES de o banco fechar.
   app.addHook('onClose', async () => emailWorker.stop());
@@ -462,6 +502,10 @@ export async function buildApp(overrides = {}) {
     emailOutboxRepository,
     emailWorker,
     mailTransport,
+    passwordResetService,
+    passwordResetTokensRepository,
+    passwordResetTokenIssuer,
+    authRateLimitsRepository,
   });
 
   // Caminho recusado pelo @fastify/static (ex.: segmento acima de 255 bytes, que não casa
@@ -546,13 +590,29 @@ export async function buildApp(overrides = {}) {
     decorateReply: false,
   });
 
+  // AF-03 (decisão 7): o /login leva o link "Esqueci minha senha" só com transporte de e-mail ativo,
+  // decidido no boot. As páginas de recuperação são lidas aqui e servidas pelo plugin próprio.
+  const loginHtml = renderLoginPage(await readFile(join(ROOT, 'web', 'login.html'), 'utf8'), {
+    forgotPasswordEnabled: emailConfig.enabled,
+  });
+  const passwordResetPages = {
+    forgot: await readFile(join(ROOT, 'web', 'esqueci-senha.html'), 'utf8'),
+    reset: await readFile(join(ROOT, 'web', 'redefinir-senha.html'), 'utf8'),
+  };
   app.get('/', (request, reply) => reply.redirect('/login', 302));
   for (const [path, file] of Object.entries(PAGES)) {
-    app.get(path, (request, reply) => reply.sendFile(file));
+    if (path === '/login') {
+      app.get(path, (request, reply) =>
+        reply.header('Cache-Control', 'public, max-age=0').type('text/html; charset=utf-8').send(loginHtml),
+      );
+    } else {
+      app.get(path, (request, reply) => reply.sendFile(file));
+    }
   }
 
   await app.register(accountsRoutes);
   await app.register(authRoutes);
+  await app.register(passwordResetRoutes, { pages: passwordResetPages });
   await app.register(businessesRoutes);
   await app.register(servicesRoutes);
   await app.register(professionalsRoutes);

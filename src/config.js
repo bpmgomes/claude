@@ -70,6 +70,13 @@ import { randomBytes } from 'node:crypto';
  *     `app.config` nem para log.
  *   - `email.worker` (`EMAIL_WORKER_ENABLED`, padrão true; `EMAIL_WORKER_INTERVAL_MS`, padrão 15000,
  *     de 100 a 3.600.000).
+ * - `passwordReset` (AF-03, design 2): limites PERSISTIDOS da recuperação de senha, sem variável de
+ *   ambiente e SEMPRE ativos (não dependem de `rateLimit.enabled`). Por IP, janela fixa por balde:
+ *   - `passwordReset.requestPerEmail` (`[{ max: 3, windowMinutes: 60 }, { max: 5, windowMinutes: 1440 }]`):
+ *     janelas DESLIZANTES sobre os pedidos aceitos, todas valem ao mesmo tempo (revisão de segurança,
+ *     decisão 3 do Gerente: 5 em 24 h, alinhado à cota de conta); acima, 202 sem enfileirar.
+ *   - `passwordReset.requestPerIp` (`{ max: 10, windowMinutes: 60 }`): acima, 429 com `Retry-After`.
+ *   - `passwordReset.confirmPerIp` (`{ max: 10, windowMinutes: 15 }`): acima, 429 com `Retry-After`.
  *
  * @param {Record<string, string|undefined>} env
  * @throws {Error} se `COOKIE_SECURE=false` com `NODE_ENV` fora de `COOKIE_INSECURE_ENVS`
@@ -97,6 +104,14 @@ export function loadConfig(env = process.env) {
     loginLock: {
       maxFailures: 5,
       lockMinutes: 15,
+    },
+    passwordReset: {
+      requestPerEmail: [
+        { max: 3, windowMinutes: 60 },
+        { max: 5, windowMinutes: 1440 },
+      ],
+      requestPerIp: { max: 10, windowMinutes: 60 },
+      confirmPerIp: { max: 10, windowMinutes: 15 },
     },
     rateLimit: {
       enabled: env.RATE_LIMIT_ENABLED !== undefined ? toBool(env.RATE_LIMIT_ENABLED) : true,
@@ -212,7 +227,7 @@ export function parseTrustProxy(value) {
 
 /**
  * Combina a config base com overrides (merge raso, exceto `rateLimit`, `loginLock`,
- * `imageProcessing` e `email`). `logStream`, `now`, `storage`, `imageLimiter`, `appointmentEvents` e
+ * `passwordReset` (AF-03: quem sobrescreve um balde passa o objeto inteiro), `imageProcessing` e `email`). `logStream`, `now`, `storage`, `imageLimiter`, `appointmentEvents` e
  * `mailTransport` (AF-18) não fazem parte da config e são descartados. Em `email`, o merge também é
  * raso: quem sobrescreve `email.worker` passa o objeto inteiro.
  * Dentro de `rateLimit` o merge também é raso: quem sobrescreve `rateLimit.logoUpload`
@@ -226,6 +241,7 @@ export function mergeConfig(base, overrides = {}) {
     ...rest,
     rateLimit: { ...base.rateLimit, ...(rest.rateLimit || {}) },
     loginLock: { ...base.loginLock, ...(rest.loginLock || {}) },
+    passwordReset: { ...(base.passwordReset || {}), ...(rest.passwordReset || {}) },
     imageProcessing: { ...base.imageProcessing, ...(rest.imageProcessing || {}) },
     email: { ...(base.email || {}), ...(rest.email || {}) },
   };

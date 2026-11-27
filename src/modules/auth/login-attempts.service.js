@@ -22,6 +22,14 @@ export function attemptKey(email, ip) {
   return createHash('sha256').update(`${email}\n${normalizeIp(ip)}`).digest('hex');
 }
 
+/**
+ * Chave da conta nas linhas do bloqueio (AF-03, critério 20): SHA-256 hex de
+ * "login_attempts.email\n<email normalizado>". Sem o e-mail em claro.
+ */
+export function attemptEmailKey(email) {
+  return createHash('sha256').update(`login_attempts.email\n${email}`).digest('hex');
+}
+
 export function createLoginAttemptsService({ db, loginAttemptsRepository, config, now = () => new Date() }) { // utc
   const { maxFailures, lockMinutes } = config.loginLock;
 
@@ -29,15 +37,16 @@ export function createLoginAttemptsService({ db, loginAttemptsRepository, config
     /**
      * Reserva atômica de uma tentativa: conta a tentativa como falha antes da
      * verificação da senha (desfeita por `clear` se o login der certo).
+     * `emailHash` (AF-03, opcional): `attemptEmailKey(email)`, gravado na linha do par e-mail + IP.
      * @returns {Promise<{ allowed: true } | { allowed: false, retryAfterSeconds: number }>}
      */
-    async reserve(key) {
+    async reserve(key, { emailHash } = {}) {
       return db.transaction(async (tx) => {
         const current = now();
         const nowMs = current.getTime();
         const nowIso = current.toISOString();
 
-        await loginAttemptsRepository.touch(key, nowIso, tx);
+        await loginAttemptsRepository.touch(key, nowIso, tx, { emailHash });
         const row = await loginAttemptsRepository.find(key, tx);
         const lockedUntilMs = row.lockedUntil ? Date.parse(row.lockedUntil) : null;
 

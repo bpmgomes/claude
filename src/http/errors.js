@@ -1,4 +1,5 @@
 import { MANAGE_MESSAGES } from '../shared/appointments.js';
+import { PASSWORD_RESET_MESSAGES } from '../shared/password-reset.js';
 
 const RATE_LIMITED_MESSAGE = 'Muitas tentativas. Aguarde um momento e tente novamente.';
 
@@ -170,6 +171,26 @@ export class RateLimitedError extends AppError {
   constructor(retryAfterSeconds) {
     super(429, 'RATE_LIMITED', RATE_LIMITED_MESSAGE);
     this.name = 'RateLimitedError';
+    this.retryAfterHeader = retryAfterSeconds;
+  }
+}
+
+// Recuperação de senha (AF-03, design 4.3). Textos de PASSWORD_RESET_MESSAGES.
+
+/** Token malformado, inexistente, vencido, usado ou invalidado: o MESMO 400 (critério 12). */
+export class PasswordResetLinkInvalidError extends AppError {
+  constructor() {
+    super(400, 'PASSWORD_RESET_LINK_INVALID', PASSWORD_RESET_MESSAGES.linkInvalid);
+    this.name = 'PasswordResetLinkInvalidError';
+  }
+}
+
+/** Limite persistido por IP (critérios 22 e 23): 429 com corpo fixo; o prazo só no `Retry-After`. */
+export class AuthRateLimitedError extends AppError {
+  /** @param {number} retryAfterSeconds */
+  constructor(retryAfterSeconds) {
+    super(429, 'RATE_LIMITED', PASSWORD_RESET_MESSAGES.tooMany);
+    this.name = 'AuthRateLimitedError';
     this.retryAfterHeader = retryAfterSeconds;
   }
 }

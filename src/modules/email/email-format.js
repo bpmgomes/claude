@@ -51,3 +51,9 @@ export function formatShortWhen(ms, timeZone) {
   const p = localParts(ms, timeZone);
   return `${p.weekdayShort}, ${p.ddmm} às ${p.time}`;
 }
+
+/** "sexta-feira, 27/11/2026, às 10:00" (AF-03, aviso de troca de senha). */
+export function formatInstant(ms, timeZone) {
+  const p = localParts(ms, timeZone);
+  return `${p.weekdayLong}, ${p.ddmmyyyy}, às ${p.time}`;
+}

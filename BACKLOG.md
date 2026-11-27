@@ -45,7 +45,7 @@ Critérios de aceite
 - Logout invalida a sessão no servidor.
 
 ### AF-03 · Recuperação de senha
-Tipo: História · Prioridade: Média · Pontos: 5 · Status: TODO
+Tipo: História · Prioridade: Média · Pontos: 5 · Status: DONE
 
 Como usuário, quero redefinir minha senha por e-mail caso a esqueça.
 

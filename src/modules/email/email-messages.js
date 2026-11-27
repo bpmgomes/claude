@@ -46,3 +46,22 @@ export const EMAIL_MESSAGES = Object.freeze({
   callBusiness: (phone) => `Dúvidas? Ligue para ${phone}.`,
   footer: 'Este é um e-mail automático. Não responda a esta mensagem.',
 });
+
+/**
+ * Textos fixos dos e-mails de conta (AF-03, design 4.2, critérios 30 e 32). `{quando}` chega pronto
+ * (data, hora e fuso pelo padrão do AF-23); o aviso de troca não tem link nenhum (decisão 8).
+ */
+export const ACCOUNT_EMAIL_MESSAGES = Object.freeze({
+  subjectReset: 'Redefinição de senha · AgendaFácil',
+  subjectChanged: 'Sua senha foi alterada · AgendaFácil',
+  greeting: EMAIL_MESSAGES.greeting,
+  introReset: 'Recebemos um pedido para redefinir a senha da sua conta no AgendaFácil.',
+  resetLink: 'Redefinir senha',
+  resetValidity: 'Este link vale por 1 hora e só pode ser usado uma vez.',
+  resetNotYou: 'Se você não pediu isso, ignore este e-mail: sua senha continua a mesma.',
+  changedAt: (when) => `A senha da sua conta no AgendaFácil foi alterada em ${when}.`,
+  changedSessions: 'Por segurança, todas as sessões abertas foram encerradas.',
+  changedNotYou:
+    'Se não foi você, abra a página de entrada do AgendaFácil, use "Esqueci minha senha" e crie uma senha nova.',
+  footer: EMAIL_MESSAGES.footer,
+});

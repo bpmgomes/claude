@@ -1,6 +1,6 @@
 // Repositório da fila de e-mails (AF-18, design 4.3). `conn` é a conexão ou a transação do chamador
 // (padrão: o `db` global). Nenhuma função aqui insere linha: isso é só de enqueue-email.js.
-import { EMAIL_MAX_SENDS } from './email-rules.js';
+import { EMAIL_MAX_SENDS, EMAIL_KIND_PASSWORD_RESET } from './email-rules.js';
 
 /**
  * @typedef {{
@@ -8,12 +8,14 @@ import { EMAIL_MAX_SENDS } from './email-rules.js';
  *   previousAppointmentId: string|null, status: string, attempts: number, nextAttemptAt: string,
  *   lockedUntil: string|null, lastErrorCode: string|null, createdAt: string, updatedAt: string,
  *   sentAt: string|null, maybeDeliveredAt: string|null,
+ *   userId: string|null,
  * }} OutboxRow
+ * `businessId`/`appointmentId` são null só nos e-mails de conta (AF-03), que têm `userId`.
  * @typedef {{ lockedUntil: string, attempts: number }} Lease
  */
 
 const COLUMNS = `id, business_id, kind, appointment_id, previous_appointment_id, status, attempts, next_attempt_at,
-       locked_until, last_error_code, created_at, updated_at, sent_at, maybe_delivered_at`;
+       locked_until, last_error_code, created_at, updated_at, sent_at, maybe_delivered_at, user_id`;
 
 const TERMINAL = "status IN ('sent', 'failed', 'skipped', 'expired')";
 
@@ -34,6 +36,7 @@ function fromRow(row) {
     updatedAt: row.updated_at,
     sentAt: row.sent_at ?? null,
     maybeDeliveredAt: row.maybe_delivered_at ?? null,
+    userId: row.user_id ?? null,
   };
 }
 
@@ -178,6 +181,43 @@ export function createEmailOutboxRepository(db) {
         [email, excludeId, sinceIso, sinceIso],
       );
       return Number(row?.n ?? 0);
+    },
+
+    /**
+     * Cota de conta (AF-03, decisão 5): links de redefinição recentes para a conta com este e-mail,
+     * com a MESMA condição de `countRecentToRecipient`, exceto a própria linha. Só `password_reset`
+     * conta (revisão de segurança, decisão 2 do Gerente): o aviso `password_changed` é isento da cota
+     * e não a consome. Independente da cota de agendamento: `countRecentToRecipient` só vê linhas com
+     * agendamento, e esta só vê linhas de conta.
+     * @returns {Promise<number>}
+     */
+    async countRecentAccountEmails(email, { sinceIso, excludeId }, conn = db) {
+      const row = await conn.get(
+        `SELECT COUNT(*) AS n FROM users u
+           JOIN email_outbox o ON o.user_id = u.id
+          WHERE u.email = ? AND o.kind = '${EMAIL_KIND_PASSWORD_RESET}' AND o.id <> ?
+            AND ((o.status = 'sent' AND o.sent_at > ?) OR o.status = 'sending' OR o.maybe_delivered_at > ?)`,
+        [email, excludeId, sinceIso, sinceIso],
+      );
+      return Number(row?.n ?? 0);
+    },
+
+    /**
+     * Existe linha do mesmo `kind` e da mesma conta criada depois desta (AF-03, critério 11)? Mesmo
+     * `created_at`: desempate pelo rowid, como o `trimLive` do AF-18.
+     * @param {{ id: string, kind: string, userId: string, createdAt: string }} row
+     * @returns {Promise<boolean>}
+     */
+    async hasNewerAccountRow(row, conn = db) {
+      const found = await conn.get(
+        `SELECT 1 AS x FROM email_outbox o
+          WHERE o.user_id = ? AND o.kind = ? AND o.id <> ?
+            AND (o.created_at > ?
+                 OR (o.created_at = ? AND o.rowid > (SELECT rowid FROM email_outbox WHERE id = ?)))
+          LIMIT 1`,
+        [row.userId, row.kind, row.id, row.createdAt, row.createdAt, row.id],
+      );
+      return Boolean(found);
     },
   };
 }

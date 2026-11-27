@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <title>Criar nova senha · AgendaFácil</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <script type="module" src="/js/reset-password-page.js"></script>
+</head>
+<body>
+  <main class="card account-recovery">
+    <h1>Criar nova senha</h1>
+
+    <form id="reset-form" novalidate hidden>
+      <p class="help" id="password-rule">A senha deve ter no mínimo 8 caracteres, com pelo menos uma letra e um número.</p>
+
+      <div class="field">
+        <label for="password">Nova senha</label>
+        <input id="password" name="password" type="password" autocomplete="new-password" maxlength="72" required
+               aria-describedby="password-rule password-error">
+        <p class="field-error" id="password-error" data-field="password" aria-live="polite"></p>
+      </div>
+
+      <div class="field">
+        <label for="passwordConfirmation">Confirme a nova senha</label>
+        <input id="passwordConfirmation" name="passwordConfirmation" type="password" autocomplete="new-password"
+               maxlength="72" required aria-describedby="passwordConfirmation-error">
+        <p class="field-error" id="passwordConfirmation-error" data-field="passwordConfirmation" aria-live="polite"></p>
+      </div>
+
+      <button type="button" id="toggle-password" class="button-secondary toggle-password" aria-pressed="false"
+              aria-controls="password passwordConfirmation">Mostrar senha</button>
+
+      <p class="form-error" id="form-error" role="alert" aria-live="polite" tabindex="-1"></p>
+
+      <button type="submit" id="submit-button">Salvar nova senha</button>
+    </form>
+
+    <div id="link-invalid" role="alert" hidden>
+      <p class="form-error" id="link-invalid-message">Link inválido ou expirado. Peça um novo link.</p>
+      <p class="secondary-link touch-link"><a href="/esqueci-senha" id="request-new-link">Pedir um novo link</a></p>
+    </div>
+
+    <noscript>
+      <p class="form-error">Link inválido ou expirado. Peça um novo link.</p>
+      <p class="secondary-link touch-link"><a href="/esqueci-senha">Pedir um novo link</a></p>
+    </noscript>
+
+    <p class="secondary-link touch-link"><a href="/login">Voltar para entrar</a></p>
+  </main>
+</body>
+</html>
